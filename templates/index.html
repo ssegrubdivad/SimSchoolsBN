@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Bayesian Network API</title>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <style>
+        body {
+            margin: 0; /* Reset default margin */
+            font-family: -apple-system,system-ui,"Segoe UI",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji";
+            font-weight: 100;
+            color: black;
+            background-color: white;
+            display: block;
+            align-items: left;
+            justify-content: left;
+            height: 80vh; /* Ensures the body takes the full viewport height */
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            padding: 10vh 15vw 10vh 15vw;
+        }
+        .headline {
+            border: #3492eb 0.35vmin solid;
+            border-radius: 2vmin;
+            padding: 2vmin 3vmin 3vmin 3vmin;
+            text-align: center;
+            font-size: 6vmin;
+            box-shadow: rgba(17, 17, 26, 0.05) 0px 1px 0px, rgba(17, 17, 26, 0.1) 0px 0px 8px;
+        }
+        .heavy {
+            font-weight: 600;
+        }
+        .info {
+            border: #3492eb 0.35vmin solid;
+            border-radius: 2vmin;
+            padding: 2vmin 3vmin 3vmin 3vmin;
+            width: 40vw;
+        }
+        input {
+            margin: 0 0 2vh 0;
+            font-family: 'Courier New', monospace;
+            font-weight: 600;
+            font-size: 1.5vmin;
+            color: white;
+            background-color: #2b2b28;
+        }
+        .title {
+            font-weight: 800;
+            font-size: 4vmin;
+            padding-bottom: 3vmin;
+            padding-left: 1vmin;
+            display: inline-block;
+        }
+        #token {
+            max-width: 100%;
+            width: 100%;
+            height: 10vmin;
+            font-family: 'Courier New', monospace;
+            max-heith: 20vmin;
+            font-size: 1.5vmin;
+            background-color: #2b2b28;
+            color: white;
+        }
+        </style>
+</head>
+<body>
+    <div class="title">Welcome to the Bayesian Network API</div><br />
+    
+    
+    <form id="loginForm" onsubmit="login(event)">
+        <div class="info">
+            <h2>Login</h2>
+            <input type="text" id="username" placeholder="Username" required /><br />
+            <input type="password" id="password" placeholder="Password" required /><br />
+            <button type="submit">Login</button>
+        </div>
+    </form>
+    
+    
+    <div id="apiInfo" style="display: none;">
+        <div class="info">
+            <h2>API Endpoints</h2>
+                <p>Use the following endpoints:</p>
+                <ul>
+                    <li><code>/upload_network</code> (POST): Upload a new Bayesian Network</li>
+                    <li><code>/query</code> (POST): Query the Bayesian Network</li>
+                </ul>
+                <p>Token:<br /><textarea id="token"></textarea></p>
+        </div>
+    </div>
+    <script>
+        let apiToken = '';
+        const apiBaseUrl = ''; // Use relative URL
+
+        async function login(event) {
+            event.preventDefault(); // Prevent default form submission
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            try {
+                const response = await axios.post('/login', { username, password });
+                apiToken = response.data.token;
+                document.getElementById('token').textContent = apiToken;
+                document.getElementById('loginForm').style.display = 'none';
+                document.getElementById('apiInfo').style.display = 'block';
+            } catch (error) {
+                alert('Login failed');
+                console.error('Login error:', error);
+            }
+        }
+
+        async function uploadNetwork(networkData) {
+            try {
+                const response = await axios.post('/upload_network', networkData, {
+                    headers: { 'Authorization': 'Bearer ' + apiToken }
+                });
+                console.log(response.data);
+            } catch (error) {
+                console.error('Error uploading network:', error);
+            }
+        }
+
+        async function queryNetwork(queryData) {
+            try {
+                const response = await axios.post('/query', queryData, {
+                    headers: { 'Authorization': 'Bearer ' + apiToken }
+                });
+                console.log(response.data);
+            } catch (error) {
+                console.error('Error querying network:', error);
+            }
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,57 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual environments
+venv/
+env/
+.env
+
+# IDEs and editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Operating system files
+.DS_Store
+Thumbs.db
+
+# Logs and databases
+*.log
+*.sqlite3
+
+# Build and distribution
+build/
+dist/
+*.egg-info/
+
+# Jupyter Notebooks
+.ipynb_checkpoints
+
+# Test coverage
+.coverage
+htmlcov/
+
+# Documentation builds
+docs/_build/
+
+# Temporary files
+tmp/
+temp/
+
+# Dependency management
+pip-lock.txt
+poetry.lock
+
+# Project-specific
+*.bns
+*.cpt
+output/
+app.py
+/app.py
+setup.py
+/setup.py
