@@ -5,3 +5,9 @@ matplotlib
 pgmpy
 pytest
 flask
+flask_sqlalchemy
+flask_jwt_extended
+werkzeug
+dotenv
+functools
+datetime
