@@ -264,7 +264,6 @@ def handle_exception(e):
     }), 500
 
 if __name__ == '__main__':
-    local_path = localPath
     cert_path = localPath + 'sims_cert_and_inter.crt'
     key_path = localPath + 'sims_private.key'
     
