@@ -325,7 +325,7 @@ This rank-ordered locus of control provides several insights into the dynamics o
 
 7. **Limited Control Areas**: Some variables, like socioeconomic status and diversity in the student body, have limited control from within the school system, highlighting the impact of broader societal factors on education.
 
-## Implications for SimSchools BN Development
+## Implications of Rank-Ordered Locus of Control for SimSchools BN Project Development
 
 Understanding the rank-ordered locus of control for each variable has several implications for the development and use of the SimSchools BN tool:
 
