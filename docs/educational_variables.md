@@ -248,11 +248,11 @@ When incorporating this locus of control categorization into the SimSchools BN s
 
 For each variable, we'll rank the level of control for each stakeholder group from most control (1) to least control (5). If a stakeholder has no meaningful control over a variable, they'll be marked with a dash (-). The stakeholder groups are:
 
-- S: Students
-- T: Teachers
-- P: Parents
-- SA: School Administrators
-- DA: District/Central Office Administrators
+- Students
+- Teachers
+- Parents
+- School Administrators
+- District/Central Office Administrators
 
 | Variable ID | Variable Name               | Students | Teachers | Parents | School Admin | District Admin |
 |-------------|-----------------------------|----------|----------|---------|--------------|----------------|
