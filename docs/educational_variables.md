@@ -254,8 +254,8 @@ For each variable, we'll rank the level of control for each stakeholder group fr
 - SA: School Administrators
 - DA: District/Central Office Administrators
 
-| Variable ID | Variable Name               | S | T | P | SA | DA |
-|-------------|-----------------------------|---|---|---|----|----|
+| Variable ID | Variable Name               | Students | Teachers | Parents | School Admin | District Admin |
+|-------------|-----------------------------|----------|----------|---------|--------------|----------------|
 | 1           | SchoolBudgetDiscrete        | - | - | - | 2  | 1  |
 | 2           | SchoolBudget                | - | - | - | 2  | 1  |
 | 3           | SchoolSize                  | - | - | 3 | 2  | 1  |
