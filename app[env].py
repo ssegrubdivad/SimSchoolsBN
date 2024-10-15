@@ -1,11 +1,12 @@
-# app.py
+# app[env]5.py
 
-from flask import Flask, request, jsonify, render_template
+from flask import Flask, request, jsonify, render_template, send_file
 from functools import wraps
 from pgmpy.models import BayesianNetwork
 from pgmpy.factors.discrete import TabularCPD
 from pgmpy.inference import VariableElimination
 from werkzeug.exceptions import BadRequest, HTTPException
+from werkzeug.utils import secure_filename
 from datetime import timedelta
 import networkx as nx
 import ssl
@@ -21,6 +22,9 @@ from werkzeug.security import generate_password_hash, check_password_hash
 
 # Import load_dotenv from python-dotenv
 from dotenv import load_dotenv
+
+# Import new parsing modules
+from src.input_parsing import NetworkParser, CPTParser
 
 # Load environment variables from .env file
 load_dotenv()
@@ -46,6 +50,7 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['JWT_SECRET_KEY'] = jwtSecretKey
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(hours=1)
 app.config['JWT_ALGORITHM'] = 'HS256'
+app.config['UPLOAD_FOLDER'] = 'uploads/'  # New configuration for file uploads
 
 # Initialize extensions without passing 'app'
 db = SQLAlchemy()
@@ -62,6 +67,9 @@ def init_app(app):
         db.create_all()
 
 init_app(app)
+
+# Ensure upload folder exists
+os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
 # User model
 class User(db.Model):
@@ -151,44 +159,71 @@ def login():
 @role_required('admin')
 def upload_network():
     global bayes_net, inference_engine
-    data = request.get_json()
-    if not data:
-        raise BadRequest("No data provided")
+    if 'file' not in request.files:
+        return jsonify({"status": "error", "message": "No file part"}), 400
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({"status": "error", "message": "No selected file"}), 400
+    if file and file.filename.endswith('.bns'):
+        filename = secure_filename(file.filename)
+        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        file.save(filepath)
+        
+        try:
+            parser = NetworkParser()
+            bayes_net = parser.parse_file(filepath)
+            inference_engine = VariableElimination(bayes_net)
+            
+            return jsonify({
+                "status": "success",
+                "message": "Network uploaded and parsed successfully",
+                "nodes": len(bayes_net.nodes()),
+                "edges": len(bayes_net.edges())
+            }), 200
+        except Exception as e:
+            logger.error(f"Error parsing network file: {str(e)}")
+            return jsonify({"status": "error", "message": f"Error parsing network file: {str(e)}"}), 400
+    else:
+        return jsonify({"status": "error", "message": "Invalid file type. Please upload a .bns file"}), 400
 
-    nodes = data.get('nodes')
-    edges = data.get('edges')
-    cpds_data = data.get('cpds')
-
-    try:
-        validate_network_structure(nodes, edges)
-        bayes_net = BayesianNetwork(edges)
-
-        cpds = []
-        for cpd_info in cpds_data:
-            validate_cpd(cpd_info)
-            cpd = TabularCPD(
-                variable=cpd_info['variable'],
-                variable_card=cpd_info['variable_card'],
-                values=cpd_info['values'],
-                evidence=cpd_info.get('evidence'),
-                evidence_card=cpd_info.get('evidence_card')
-            )
-            cpds.append(cpd)
-        bayes_net.add_cpds(*cpds)
-
-        if not bayes_net.check_model():
-            raise ValueError('Invalid Bayesian Network model')
-
-        inference_engine = VariableElimination(bayes_net)
-
-        return jsonify({'status': 'success', 'message': 'Bayesian Network uploaded successfully.'}), 200
-    except ValueError as e:
-        logger.error(f"ValueError: {str(e)}")
-        return jsonify({'status': 'error', 'message': str(e)}), 400
-    except Exception as e:
-        tb = traceback.format_exc()
-        logger.error(f"An error occurred in upload_network: {str(e)}\n{tb}")
-        return jsonify({'status': 'error', 'message': 'An unexpected error occurred'}), 500
+@app.route('/upload_cpt', methods=['POST'])
+@role_required('admin')
+def upload_cpt():
+    global bayes_net
+    if not bayes_net:
+        return jsonify({"status": "error", "message": "No network structure available. Please upload a network first."}), 400
+    
+    if 'file' not in request.files:
+        return jsonify({"status": "error", "message": "No file part"}), 400
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({"status": "error", "message": "No selected file"}), 400
+    if file and file.filename.endswith('.cpt'):
+        filename = secure_filename(file.filename)
+        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        file.save(filepath)
+        
+        try:
+            parser = CPTParser()
+            cpts = parser.parse_file(filepath)
+            
+            for node_id, cpt in cpts.items():
+                node = bayes_net.get_cpds(node_id)
+                if node:
+                    bayes_net.remove_cpds(node)
+                bayes_net.add_cpds(cpt)
+            
+            return jsonify({
+                "status": "success",
+                "message": "CPT file uploaded and parsed successfully",
+                "num_cpts": len(cpts),
+                "node_ids": list(cpts.keys())
+            }), 200
+        except Exception as e:
+            logger.error(f"Error parsing CPT file: {str(e)}")
+            return jsonify({"status": "error", "message": f"Error parsing CPT file: {str(e)}"}), 400
+    else:
+        return jsonify({"status": "error", "message": "Invalid file type. Please upload a .cpt file"}), 400
 
 @app.route('/query', methods=['POST'])
 @role_required('admin')

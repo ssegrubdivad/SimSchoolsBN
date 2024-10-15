@@ -5,22 +5,19 @@
     <title>Bayesian Network API</title>
     <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
     <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+        }
         body {
-            margin: 0; /* Reset default margin */
             font-family: -apple-system,system-ui,"Segoe UI",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji";
             font-weight: 100;
             color: black;
             background-color: white;
-            display: block;
-            align-items: left;
-            justify-content: left;
-            height: 80vh; /* Ensures the body takes the full viewport height */
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            padding: 10vh 15vw 10vh 15vw;
+            padding: 5vh 15vw;
+            box-sizing: border-box;
+            overflow-y: auto;
         }
         .headline {
             border: #3492eb 0.35vmin solid;
@@ -37,9 +34,11 @@
             border: #3492eb 0.35vmin solid;
             border-radius: 2vmin;
             padding: 2vmin 3vmin 3vmin 3vmin;
-            width: 40vw;
+            width: 100%;
+            margin-bottom: 2vh;
+            box-sizing: border-box;
         }
-        input {
+        input, button {
             margin: 0 0 2vh 0;
             font-family: 'Courier New', monospace;
             font-weight: 600;
@@ -59,41 +58,78 @@
             width: 100%;
             height: 10vmin;
             font-family: 'Courier New', monospace;
-            max-heith: 20vmin;
+            max-height: 20vmin;
             font-size: 1.5vmin;
             background-color: #2b2b28;
             color: white;
         }
-        </style>
+    </style>
 </head>
 <body>
-    <div class="title">Welcome to the Bayesian Network API</div><br />
-    
-    
-    <form id="loginForm" onsubmit="login(event)">
-        <div class="info">
-            <h2>Login</h2>
-            <input type="text" id="username" placeholder="Username" required /><br />
-            <input type="password" id="password" placeholder="Password" required /><br />
-            <button type="submit">Login</button>
+    <div class="content-wrapper">
+        <div class="title">Welcome to the Bayesian Network API</div><br />
+        
+        <div class="debug-box">
+            <p>Debug Info: If you can see this box, the content is being rendered correctly.</p>
+            <p>Viewport Height: <span id="viewport-height"></span></p>
+            <p>Document Height: <span id="document-height"></span></p>
         </div>
-    </form>
-    
-    
-    <div id="apiInfo" style="display: none;">
-        <div class="info">
-            <h2>API Endpoints</h2>
+
+        <form id="loginForm" onsubmit="login(event)">
+            <div class="info">
+                <h2>Login</h2>
+                <input type="text" id="username" placeholder="Username" required /><br />
+                <input type="password" id="password" placeholder="Password" required /><br />
+                <button type="submit">Login</button>
+            </div>
+        </form>
+        
+        <div id="apiInfo" style="display: none;">
+            <div class="info">
+                <h2>API Endpoints</h2>
                 <p>Use the following endpoints:</p>
                 <ul>
                     <li><code>/upload_network</code> (POST): Upload a new Bayesian Network</li>
+                    <li><code>/upload_cpt</code> (POST): Upload a CPT file</li>
                     <li><code>/query</code> (POST): Query the Bayesian Network</li>
                 </ul>
                 <p>Token:<br /><textarea id="token"></textarea></p>
+            </div>
+            
+            <div class="info">
+                <h2>Upload Bayesian Network</h2>
+                <form id="uploadNetworkForm">
+                    <input type="file" id="networkFile" accept=".bns" required />
+                    <button type="submit">Upload Network</button>
+                </form>
+            </div>
+            
+            <div class="info">
+                <h2>Upload CPT</h2>
+                <form id="uploadCPTForm">
+                    <input type="file" id="cptFile" accept=".cpt" required />
+                    <button type="submit">Upload CPT</button>
+                </form>
+            </div>
+        </div>
+
+        <div class="debug-box">
+            <p>Debug Info: If you can see this box, all content has been loaded.</p>
         </div>
     </div>
+
     <script>
         let apiToken = '';
         const apiBaseUrl = ''; // Use relative URL
+
+        // Debug info update
+        function updateDebugInfo() {
+            document.getElementById('viewport-height').textContent = window.innerHeight + 'px';
+            document.getElementById('document-height').textContent = document.documentElement.scrollHeight + 'px';
+        }
+
+        window.addEventListener('load', updateDebugInfo);
+        window.addEventListener('resize', updateDebugInfo);
 
         async function login(event) {
             event.preventDefault(); // Prevent default form submission
@@ -105,20 +141,60 @@
                 document.getElementById('token').textContent = apiToken;
                 document.getElementById('loginForm').style.display = 'none';
                 document.getElementById('apiInfo').style.display = 'block';
+                updateDebugInfo(); // Update debug info after showing new content
             } catch (error) {
                 alert('Login failed');
                 console.error('Login error:', error);
             }
         }
 
-        async function uploadNetwork(networkData) {
+        async function uploadNetwork(event) {
+            event.preventDefault();
+            const fileInput = document.getElementById('networkFile');
+            const file = fileInput.files[0];
+            if (!file) {
+                alert('Please select a file');
+                return;
+            }
+            const formData = new FormData();
+            formData.append('file', file);
             try {
-                const response = await axios.post('/upload_network', networkData, {
-                    headers: { 'Authorization': 'Bearer ' + apiToken }
+                const response = await axios.post('/upload_network', formData, {
+                    headers: { 
+                        'Authorization': 'Bearer ' + apiToken,
+                        'Content-Type': 'multipart/form-data'
+                    }
                 });
                 console.log(response.data);
+                alert('Network uploaded successfully');
             } catch (error) {
                 console.error('Error uploading network:', error);
+                alert('Error uploading network');
+            }
+        }
+
+        async function uploadCPT(event) {
+            event.preventDefault();
+            const fileInput = document.getElementById('cptFile');
+            const file = fileInput.files[0];
+            if (!file) {
+                alert('Please select a file');
+                return;
+            }
+            const formData = new FormData();
+            formData.append('file', file);
+            try {
+                const response = await axios.post('/upload_cpt', formData, {
+                    headers: { 
+                        'Authorization': 'Bearer ' + apiToken,
+                        'Content-Type': 'multipart/form-data'
+                    }
+                });
+                console.log(response.data);
+                alert('CPT uploaded successfully');
+            } catch (error) {
+                console.error('Error uploading CPT:', error);
+                alert('Error uploading CPT');
             }
         }
 
@@ -132,6 +208,9 @@
                 console.error('Error querying network:', error);
             }
         }
+
+        document.getElementById('uploadNetworkForm').addEventListener('submit', uploadNetwork);
+        document.getElementById('uploadCPTForm').addEventListener('submit', uploadCPT);
     </script>
 </body>
 </html>
