@@ -54,11 +54,11 @@ class BayesianNetwork:
         self.edges = [edge for edge in self.edges if edge.parent != parent or edge.child != child]
         child.remove_parent(parent)
 
-    def get_node(self, node_id: str) -> Node:
-        return self.nodes.get(node_id)
+    def get_nodes(self):
+        return list(self.nodes.values())
 
-    def get_edges(self) -> List[Tuple[str, str]]:
-        return [(edge.parent.id, edge.child.id) for edge in self.edges]
+    def get_edges(self):
+        return self.edges
 
     def has_cycle(self) -> bool:
         visited = set()
@@ -106,6 +106,16 @@ class BayesianNetwork:
         dfs(node_id)
         return descendants
 
+    def check_model(self) -> bool:
+        # Implement basic model checking logic
+        # For now, we'll just check if the graph is acyclic
+        return not self.has_cycle()
+
+    def get_cpds(self):
+        # This method should return the CPDs for all nodes
+        # For now, we'll return an empty list as we haven't implemented CPDs yet
+        return []
+        
     def __str__(self) -> str:
         return f"BayesianNetwork(name={self.name}, nodes={len(self.nodes)}, edges={len(self.edges)})"
 

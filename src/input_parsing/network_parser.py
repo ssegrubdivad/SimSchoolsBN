@@ -17,16 +17,13 @@ class NetworkParser:
     def parse_file(self, file_path: str) -> BayesianNetwork:
         try:
             with open(file_path, 'r') as file:
-                content = file.read()
+                lines = file.readlines()
         except IOError as e:
             self.logger.error(f"Error reading file {file_path}: {str(e)}")
             raise
 
         try:
-            self._parse_metadata(content)
-            self._parse_nodes(content)
-            self._parse_edges(content)
-            self._parse_dbn_timeslices(content)
+            self._parse_content(lines)
             self._create_network()
         except ValueError as e:
             self.logger.error(f"Error parsing network structure: {str(e)}")
@@ -34,39 +31,67 @@ class NetworkParser:
 
         return self.network
 
-    def _parse_metadata(self, content: str) -> None:
-        metadata_pattern = r'META\s+(\w+)\s+(.+)'
-        for match in re.finditer(metadata_pattern, content):
-            key, value = match.groups()
+    def _parse_content(self, lines: List[str]) -> None:
+        current_node = None
+        for line in lines:
+            line = line.strip()
+            if not line or line.startswith('#'):
+                continue
+            if line.startswith('META'):
+                self._parse_metadata(line)
+            elif line.startswith('NODE'):
+                current_node = self._parse_node(line)
+            elif line.startswith('EDGE'):
+                self._parse_edge(line)
+            elif current_node and line not in ['END_NETWORK', 'END_CPT', 'END_CPT_FILE']:
+                self._parse_node_details(current_node, line)
+
+    def _parse_metadata(self, line: str) -> None:
+        parts = line.split(maxsplit=2)
+        if len(parts) == 3:
+            _, key, value = parts
             self.metadata[key] = value
         self.logger.info(f"Parsed metadata: {self.metadata}")
 
-    def _parse_nodes(self, content: str) -> None:
-        node_pattern = r'NODE\s+(\w+)\s+(\w+)\s+(\w+)(.*?)(?=NODE|\Z)'
-        for match in re.finditer(node_pattern, content, re.DOTALL):
-            node_id, node_name, variable_type, node_details = match.groups()
-            self.nodes[node_id] = {
-                'name': node_name,
-                'type': variable_type,
-                'details': self._parse_node_details(node_details)
-            }
-        self.logger.info(f"Parsed {len(self.nodes)} nodes")
+    def _parse_node(self, line: str) -> str:
+        parts = line.split()
+        if len(parts) == 3:  # NODE name type
+            _, node_id, variable_type = parts
+            self.logger.info(f"Parsing node: id='{node_id}', type='{variable_type}'")
+            try:
+                node = Node(node_id, node_id, variable_type)
+                self.nodes[node_id] = {
+                    'node': node,
+                    'details': {}
+                }
+                self.logger.info(f"Successfully created node: {node_id}")
+                return node_id
+            except ValueError as e:
+                self.logger.error(f"Error creating node {node_id}: {str(e)}")
+                raise
+        else:
+            self.logger.error(f"Invalid NODE line: {line}")
+            raise ValueError(f"Invalid NODE line: {line}")
 
-    def _parse_node_details(self, details: str) -> Dict[str, str]:
-        parsed_details = {}
-        for line in details.strip().split('\n'):
-            if line.strip():
-                try:
-                    key, value = line.strip().split(None, 1)
-                    parsed_details[key] = value
-                except ValueError:
-                    self.logger.warning(f"Skipping invalid node detail line: {line}")
-        return parsed_details
+    def _parse_node_details(self, node_id: str, line: str) -> None:
+        if node_id in self.nodes:
+            parts = line.split(maxsplit=1)
+            if len(parts) == 2:
+                key, value = parts
+                if key == 'STATES':
+                    states = [s.strip() for s in value.split(',')]
+                    self.nodes[node_id]['node'].add_states(states)
+                self.nodes[node_id]['details'][key] = value
+            else:
+                self.logger.warning(f"Skipping invalid node detail line for {node_id}: {line}")
 
-    def _parse_edges(self, content: str) -> None:
-        edge_pattern = r'EDGE\s+(\w+)\s+(\w+)'
-        self.edges = re.findall(edge_pattern, content)
-        self.logger.info(f"Parsed {len(self.edges)} edges")
+    def _parse_edge(self, line: str) -> None:
+        parts = line.split()
+        if len(parts) == 3:
+            _, parent, child = parts
+            self.edges.append((parent, child))
+        else:
+            self.logger.warning(f"Skipping invalid EDGE line: {line}")
 
     def _parse_dbn_timeslices(self, content: str) -> None:
         dbn_pattern = r'DBN_TIMESLICE(.*?)(?=DBN_TIMESLICE|\Z)'
@@ -90,14 +115,10 @@ class NetworkParser:
         return re.findall(edge_pattern, line)
 
     def _create_network(self) -> None:
-        if self.dbn_timeslices:
-            self.network = DynamicBayesianNetwork(self.metadata.get('network_name', 'Unnamed DBN'))
-        else:
-            self.network = BayesianNetwork(self.metadata.get('network_name', 'Unnamed Network'))
+        self.network = BayesianNetwork(self.metadata.get('network_name', 'Unnamed Network'))
         
         for node_id, node_info in self.nodes.items():
-            node = Node(node_id, node_info['name'], node_info['type'])
-            self.network.add_node(node)
+            self.network.add_node(node_info['node'])
 
         for parent_id, child_id in self.edges:
             try:
@@ -105,11 +126,7 @@ class NetworkParser:
             except ValueError as e:
                 self.logger.error(f"Error adding edge {parent_id} -> {child_id}: {str(e)}")
 
-        if isinstance(self.network, DynamicBayesianNetwork):
-            for timeslice in self.dbn_timeslices:
-                self.network.add_timeslice(timeslice['intra_slice_edges'], timeslice['inter_slice_edges'])
-
-        self.logger.info(f"Created {'Dynamic ' if self.dbn_timeslices else ''}Bayesian Network with {len(self.nodes)} nodes and {len(self.edges)} edges")
+        self.logger.info(f"Created Bayesian Network with {len(self.nodes)} nodes and {len(self.edges)} edges")
 
     def get_metadata(self) -> Dict[str, str]:
         return self.metadata
