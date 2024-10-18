@@ -15,7 +15,7 @@ SimSchools BN is a comprehensive tool for creating, analyzing, and querying Baye
 
 ## Basic Network Visualization
 
-![Alt text](docs/images/graph1.png?raw=true "Basic Network Visualization Example"){ width=70% }
+![Alt text](docs/images/graph1.png?raw=true "Basic Network Visualization Example" | width=70%)
 
 ## Project Structure
 
