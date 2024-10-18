@@ -6,7 +6,7 @@ SimSchools BN is a comprehensive tool for creating, analyzing, and querying Baye
 
 - Input parsing for .bns and .cpt files
 - Support for discrete and continuous variables relevant to educational contexts
-- Multiple inference algorithms (Variable Elimination, MCMC, Junction Tree)
+- Multiple inference algorithms (Variable Elimination, MAP, MPE, MCMC, Junction Tree)
 - Query interface for probabilistic reasoning in educational scenarios
 - Visualization of network structure and query results
 - Extensibility framework for custom node types and distributions specific to educational modeling
@@ -20,6 +20,14 @@ SimSchools BN is a comprehensive tool for creating, analyzing, and querying Baye
 - `docs/`: Documentation files
 - `examples/`: Example Bayesian Networks for school and education system simulations
 - `scripts/`: Utility scripts for development and deployment
+
+## Implementation Notes
+
+### Query Processing
+
+The current implementation uses a basic approach for Maximum a Posteriori (MAP) and Most Probable Explanation (MPE) queries. This approach is suitable for the current scale and complexity of educational models in the system.
+
+Future Consideration: If educational contexts prove to involve more complex or larger networks, we may need to implement or integrate more specialized estimator methods for improved performance and accuracy in MAP and MPE queries.
 
 ## Getting Started
 
