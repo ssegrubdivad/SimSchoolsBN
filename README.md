@@ -13,6 +13,10 @@ SimSchools BN is a comprehensive tool for creating, analyzing, and querying Baye
 - Learning module for structure and parameter learning from educational data
 - Sensitivity analysis capabilities for educational factors
 
+## Basic Network Visualization
+
+![Alt text](docs/images/graph1.png?raw=true "Basic Network Visualization Example")
+
 ## Project Structure
 
 - `src/`: Source code for the application
