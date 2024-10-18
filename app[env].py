@@ -1,4 +1,4 @@
-# app[env]5.py
+# app[env].py
 
 from flask import Flask, request, jsonify, render_template, send_file
 from functools import wraps
@@ -25,6 +25,8 @@ from dotenv import load_dotenv
 
 # Import new parsing modules
 from src.input_parsing import NetworkParser, CPTParser
+from src.query_interface.query_processor import QueryProcessor
+from src.visualization.network_visualizer import NetworkVisualizer
 
 # Load environment variables from .env file
 load_dotenv()
@@ -50,7 +52,7 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['JWT_SECRET_KEY'] = jwtSecretKey
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(hours=1)
 app.config['JWT_ALGORITHM'] = 'HS256'
-app.config['UPLOAD_FOLDER'] = 'uploads/'  # New configuration for file uploads
+app.config['UPLOAD_FOLDER'] = 'uploads/'  
 
 # Initialize extensions without passing 'app'
 db = SQLAlchemy()
@@ -87,7 +89,7 @@ class User(db.Model):
 
 # Global variables
 bayes_net = None
-inference_engine = None
+query_processor = None
 
 # Helper functions
 def validate_network_structure(nodes, edges):
@@ -125,6 +127,7 @@ def role_required(required_role):
         return wrapper
     return decorator
 
+
 # Routes
 @app.route('/')
 def index():
@@ -158,7 +161,7 @@ def login():
 @app.route('/upload_network', methods=['POST'])
 @role_required('admin')
 def upload_network():
-    global bayes_net, inference_engine
+    global bayes_net, query_processor
     if 'file' not in request.files:
         return jsonify({"status": "error", "message": "No file part"}), 400
     file = request.files['file']
@@ -172,17 +175,21 @@ def upload_network():
         try:
             parser = NetworkParser()
             bayes_net = parser.parse_file(filepath)
-            inference_engine = VariableElimination(bayes_net)
+            query_processor = QueryProcessor(bayes_net)
             
+            logger.info(f"Network uploaded successfully: {len(bayes_net.nodes)} nodes, {len(bayes_net.edges)} edges")
             return jsonify({
                 "status": "success",
                 "message": "Network uploaded and parsed successfully",
-                "nodes": len(bayes_net.nodes()),
-                "edges": len(bayes_net.edges())
+                "nodes": len(bayes_net.nodes),
+                "edges": len(bayes_net.edges)
             }), 200
+        except ValueError as ve:
+            logger.warning(f"Invalid network file: {str(ve)}")
+            return jsonify({"status": "error", "message": str(ve)}), 400
         except Exception as e:
-            logger.error(f"Error parsing network file: {str(e)}")
-            return jsonify({"status": "error", "message": f"Error parsing network file: {str(e)}"}), 400
+            logger.error(f"Error parsing network file: {str(e)}", exc_info=True)
+            return jsonify({"status": "error", "message": f"An unexpected error occurred while parsing the network file: {str(e)}"}), 500
     else:
         return jsonify({"status": "error", "message": "Invalid file type. Please upload a .bns file"}), 400
 
@@ -228,28 +235,32 @@ def upload_cpt():
 @app.route('/query', methods=['POST'])
 @role_required('admin')
 def query_model():
-    global inference_engine
-    if not inference_engine:
-        return jsonify({'status': 'error', 'message': 'Inference engine not initialized.'}), 400
+    global query_processor
+    if not query_processor:
+        return jsonify({'status': 'error', 'message': 'Query processor not initialized. Please upload a network first.'}), 400
 
     data = request.get_json()
     if not data:
-        raise BadRequest("No data provided")
+        return jsonify({'status': 'error', 'message': 'No data provided'}), 400
 
-    query_var = data.get('query_var')
+    query_type = data.get('query_type', 'marginal')
+    query_vars = data.get('query_vars', [])
     evidence = data.get('evidence', {})
+    interventions = data.get('interventions', {})
 
-    if not query_var:
-        raise ValueError("No query variable provided")
+    if not query_vars:
+        return jsonify({'status': 'error', 'message': 'No query variables provided'}), 400
 
     try:
-        result = inference_engine.query(variables=[query_var], evidence=evidence)
-        result_json = {query_var: result[query_var].values.tolist()}
-        return jsonify(result_json), 200
+        result = query_processor.process_query(query_type, query_vars, evidence, interventions)
+        logger.info(f"Query processed successfully: type={query_type}, vars={query_vars}")
+        return jsonify({'status': 'success', 'result': result}), 200
+    except ValueError as ve:
+        logger.warning(f"Invalid query parameters: {str(ve)}")
+        return jsonify({'status': 'error', 'message': str(ve)}), 400
     except Exception as e:
-        tb = traceback.format_exc()
-        logger.error(f"An error occurred in query_model: {str(e)}\n{tb}")
-        return jsonify({'status': 'error', 'message': 'An unexpected error occurred'}), 500
+        logger.error(f"An error occurred in query_model: {str(e)}", exc_info=True)
+        return jsonify({'status': 'error', 'message': 'An unexpected error occurred. Please check the logs for more information.'}), 500
 
 @app.route('/get_network_structure', methods=['GET'])
 @role_required('admin')
@@ -273,6 +284,25 @@ def get_network_structure():
         tb = traceback.format_exc()
         logger.error(f"An error occurred in get_network_structure: {str(e)}\n{tb}")
         return jsonify({'status': 'error', 'message': 'An unexpected error occurred'}), 500
+
+@app.route('/visualize_network', methods=['GET'])
+@role_required('admin')
+def visualize_network():
+    global bayes_net
+    if not bayes_net:
+        return jsonify({'status': 'error', 'message': 'No network structure available.'}), 400
+    
+    try:
+        visualizer = NetworkVisualizer(bayes_net)
+        graph_data = visualizer.generate_html()
+        return graph_data, 200, {'Content-Type': 'application/json'}
+    except Exception as e:
+        logger.error(f"An error occurred in visualize_network: {str(e)}", exc_info=True)
+        return jsonify({
+            'status': 'error', 
+            'message': 'An unexpected error occurred while generating the visualization.',
+            'details': str(e)
+        }), 500
 
 # Error handlers
 @app.errorhandler(404)
