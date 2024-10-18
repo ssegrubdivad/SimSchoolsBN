@@ -1,4 +1,4 @@
-# app[env].py
+# app8.py
 
 from flask import Flask, request, jsonify, render_template, send_file
 from functools import wraps
@@ -52,7 +52,7 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['JWT_SECRET_KEY'] = jwtSecretKey
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(hours=1)
 app.config['JWT_ALGORITHM'] = 'HS256'
-app.config['UPLOAD_FOLDER'] = 'uploads/'  
+app.config['UPLOAD_FOLDER'] = 'uploads/'  # New configuration for file uploads
 
 # Initialize extensions without passing 'app'
 db = SQLAlchemy()
@@ -247,12 +247,19 @@ def query_model():
     query_vars = data.get('query_vars', [])
     evidence = data.get('evidence', {})
     interventions = data.get('interventions', {})
+    time_steps = data.get('time_steps', None)
 
-    if not query_vars:
+    if not query_vars and query_type != 'mpe':
         return jsonify({'status': 'error', 'message': 'No query variables provided'}), 400
 
     try:
-        result = query_processor.process_query(query_type, query_vars, evidence, interventions)
+        if query_type == 'temporal':
+            if time_steps is None:
+                return jsonify({'status': 'error', 'message': 'Time steps must be provided for temporal queries'}), 400
+            result = query_processor.temporal_query(query_vars, time_steps, evidence)
+        else:
+            result = query_processor.process_query(query_type, query_vars, evidence, interventions)
+        
         logger.info(f"Query processed successfully: type={query_type}, vars={query_vars}")
         return jsonify({'status': 'success', 'result': result}), 200
     except ValueError as ve:
@@ -261,7 +268,7 @@ def query_model():
     except Exception as e:
         logger.error(f"An error occurred in query_model: {str(e)}", exc_info=True)
         return jsonify({'status': 'error', 'message': 'An unexpected error occurred. Please check the logs for more information.'}), 500
-
+        
 @app.route('/get_network_structure', methods=['GET'])
 @role_required('admin')
 def get_network_structure():

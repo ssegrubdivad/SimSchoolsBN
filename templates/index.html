@@ -68,11 +68,11 @@
 /*        For the networkVisualization svg element*/
         .links line {
             stroke: #999;
-            stroke-opacity: 0.6;
+            stroke-opacity: 1;
         }
         .nodes circle {
             stroke: #fff;
-            stroke-width: 1.5px;
+            stroke-width: 2px;
         }
         text {
             font-family: sans-serif;
@@ -88,7 +88,7 @@
     <div class="content-wrapper">
         <div class="title">Welcome to the Bayesian Network API</div><br />
         
-        <div class="debug-box">
+        <div class="debug-box" style="display: none;">
             <p>Debug Info: If you can see this box, the content is being rendered correctly.</p>
             <p>Viewport Height: <span id="viewport-height"></span></p>
             <p>Document Height: <span id="document-height"></span></p>
@@ -103,7 +103,7 @@
             </div>
         </form>
         
-        <div id="apiInfo" style="display: block;">
+        <div id="apiInfo" style="display: none;">
             <div class="info">
                 <h2>API Endpoints</h2>
                 <p>Use the following endpoints:</p>
@@ -135,6 +135,26 @@
                 <h2>Visualize Network</h2>
                 <button id="visualizeNetworkBtn" onclick="visualizeNetwork()">Visualize Network</button>
                 <div id="networkVisualization" style="width: 960px; height: 600px; border: 1px solid #ccc; margin-top: 10px;"></div>
+            </div>
+
+            <div class="info">
+                <h2>Query Network</h2>
+                <form id="queryForm">
+                    <select id="queryType">
+                        <option value="marginal">Marginal</option>
+                        <option value="conditional">Conditional</option>
+                        <option value="interventional">Interventional</option>
+                        <option value="map">MAP</option>
+                        <option value="mpe">MPE</option>
+                        <option value="temporal">Temporal</option>
+                    </select>
+                    <input type="text" id="queryVars" placeholder="Query variables (comma-separated)">
+                    <input type="text" id="evidence" placeholder="Evidence (JSON format)">
+                    <input type="text" id="interventions" placeholder="Interventions (JSON format)">
+                    <input type="number" id="timeSteps" placeholder="Time steps (for temporal queries)" style="display: none;">
+                    <button type="submit">Query</button>
+                </form>
+                <div id="queryResult"></div>
             </div>
         </div>
 
@@ -253,40 +273,39 @@
                     .force("charge", d3.forceManyBody().strength(-300))
                     .force("center", d3.forceCenter(visualizationDiv.clientWidth / 2, visualizationDiv.clientHeight / 2));
 
-                // Create arrow marker for directed edges
-                svg.append("defs").selectAll("marker")
-                    .data(["end"])
-                    .enter().append("marker")
-                    .attr("id", String)
-                    .attr("viewBox", "0 -5 10 10")
-                    .attr("refX", 15)
-                    .attr("refY", -1.5)
-                    .attr("markerWidth", 6)
-                    .attr("markerHeight", 6)
-                    .attr("orient", "auto")
-                    .append("path")
-                    .attr("d", "M0,-5L10,0L0,5");
-
+                // Create link lines
                 const link = svg.append("g")
                     .attr("class", "links")
                     .selectAll("line")
                     .data(graph.links)
                     .enter().append("line")
                     .attr("stroke-width", 2)
-                    .attr("stroke", "#999")
-                    .attr("marker-end", "url(#end)");  // Add arrow marker
+                    .attr("stroke", "#999");
 
+                // Create nodes
                 const node = svg.append("g")
                     .attr("class", "nodes")
-                    .selectAll("g")
+                    .selectAll("circle")
                     .data(graph.nodes)
-                    .enter().append("g");
-
-                const circles = node.append("circle")
+                    .enter().append("circle")
                     .attr("r", 10)
                     .attr("fill", d => color(d.id));
 
-                const labels = node.append("text")
+                // Create arrow heads
+                const arrowHead = svg.append("g")
+                    .attr("class", "arrow-heads")
+                    .selectAll("path")
+                    .data(graph.links)
+                    .enter().append("path")
+                    .attr("d", "M0,-5L10,0L0,5")
+                    .attr("fill", "#999");
+
+                // Create labels
+                const label = svg.append("g")
+                    .attr("class", "labels")
+                    .selectAll("text")
+                    .data(graph.nodes)
+                    .enter().append("text")
                     .text(d => d.id)
                     .attr('x', 12)
                     .attr('y', 3);
@@ -309,7 +328,24 @@
                         .attr("y2", d => d.target.y);
 
                     node
-                        .attr("transform", d => `translate(${d.x},${d.y})`);
+                        .attr("cx", d => d.x)
+                        .attr("cy", d => d.y);
+
+                    arrowHead
+                        .attr("transform", d => {
+                            const dx = d.target.x - d.source.x;
+                            const dy = d.target.y - d.source.y;
+                            const angle = Math.atan2(dy, dx) * 180 / Math.PI;
+                            const nodeRadius = 19.25;  // Should match the node radius * 2 if wanting to touch circumference of node only
+                            const distance = Math.sqrt(dx * dx + dy * dy);
+                            const x = d.source.x + (dx * (distance - nodeRadius)) / distance;
+                            const y = d.source.y + (dy * (distance - nodeRadius)) / distance;
+                            return `translate(${x},${y}) rotate(${angle})`;
+                        });
+
+                    label
+                        .attr("x", d => d.x + 12)
+                        .attr("y", d => d.y + 3);
                 }
 
                 // Add drag capabilities
@@ -343,6 +379,55 @@
 
         document.getElementById('uploadNetworkForm').addEventListener('submit', uploadNetwork);
         document.getElementById('uploadCPTForm').addEventListener('submit', uploadCPT);
+
+        document.getElementById('queryType').addEventListener('change', function() {
+            var timeStepsInput = document.getElementById('timeSteps');
+            var queryVarsInput = document.getElementById('queryVars');
+            if (this.value === 'temporal') {
+                timeStepsInput.style.display = 'block';
+            } else {
+                timeStepsInput.style.display = 'none';
+            }
+            if (this.value === 'mpe') {
+                queryVarsInput.style.display = 'none';
+            } else {
+                queryVarsInput.style.display = 'block';
+            }
+        });
+
+        document.getElementById('queryForm').addEventListener('submit', async function(event) {
+            event.preventDefault();
+            var queryType = document.getElementById('queryType').value;
+            var queryVars = document.getElementById('queryVars').value.split(',').map(s => s.trim());
+            var evidence = JSON.parse(document.getElementById('evidence').value || '{}');
+            var interventions = JSON.parse(document.getElementById('interventions').value || '{}');
+            var timeSteps = parseInt(document.getElementById('timeSteps').value);
+
+            var data = {
+                query_type: queryType,
+                query_vars: queryVars,
+                evidence: evidence,
+                interventions: interventions
+            };
+
+            if (queryType === 'temporal') {
+                data.time_steps = timeSteps;
+            }
+
+            if (queryType === 'mpe') {
+                delete data.query_vars;
+            }
+
+            try {
+                const response = await axios.post('/query', data, {
+                    headers: { 'Authorization': 'Bearer ' + apiToken }
+                });
+                document.getElementById('queryResult').textContent = JSON.stringify(response.data, null, 2);
+            } catch (error) {
+                console.error('Error querying network:', error);
+                alert('Error querying network');
+            }
+        });
     </script>
 </body>
 </html>
