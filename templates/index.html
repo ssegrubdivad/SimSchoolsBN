@@ -41,11 +41,9 @@
         }
         input, button {
             margin: 0 0 2vh 0;
-            font-family: 'Courier New', monospace;
+/*            font-family: 'Courier New', monospace;
             font-weight: 600;
-            font-size: 1.5vmin;
-            color: white;
-            background-color: #2b2b28;
+            font-size: 1.5vmin; */
         }
         .title {
             font-weight: 800;
@@ -61,8 +59,8 @@
             font-family: 'Courier New', monospace;
             max-height: 20vmin;
             font-size: 1.5vmin;
-            background-color: #2b2b28;
-            color: white;
+            background-color: #FFFFFF;
+            color: black;
         }
 
 /*        For the networkVisualization svg element*/
@@ -73,14 +71,35 @@
         .nodes circle {
             stroke: #fff;
             stroke-width: 2px;
+            cursor: move;
         }
-        text {
+        .labels text {
             font-family: sans-serif;
             font-size: 12px;
+            -webkit-user-select: none; /* Safari */
+            -ms-user-select: none; /* IE 10 and IE 11 */
+            user-select: none;
+            cursor: default;
         }
         #networkVisualization {
             border: 1px solid #ccc;
             margin-top: 10px;
+            -webkit-user-select: none;
+            -ms-user-select: none;
+            user-select: none;
+            cursor: default;
+            width: 100%;
+            height: 60vh; 
+            min-height: 300px; 
+            position: relative; 
+        }
+
+        #networkVisualization svg {
+            position: absolute; 
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
         }
     </style>
 </head>
@@ -134,7 +153,7 @@
             <div class="info">
                 <h2>Visualize Network</h2>
                 <button id="visualizeNetworkBtn" onclick="visualizeNetwork()">Visualize Network</button>
-                <div id="networkVisualization" style="width: 960px; height: 600px; border: 1px solid #ccc; margin-top: 10px;"></div>
+                <div id="networkVisualization"></div>
             </div>
 
             <div class="info">
@@ -147,6 +166,10 @@
                         <option value="map">MAP</option>
                         <option value="mpe">MPE</option>
                         <option value="temporal">Temporal</option>
+                    </select>
+                    <select id="inferenceAlgorithm">
+                        <option value="variable_elimination">Variable Elimination</option>
+                        <option value="junction_tree">Junction Tree</option>
                     </select>
                     <input type="text" id="queryVars" placeholder="Query variables (comma-separated)">
                     <input type="text" id="evidence" placeholder="Evidence (JSON format)">
@@ -258,15 +281,24 @@
                 
                 const visualizationDiv = document.getElementById('networkVisualization');
                 visualizationDiv.innerHTML = ''; // Clear previous content
+
                 
                 const svg = d3.select(visualizationDiv)
                     .append("svg")
-                    .attr("width", visualizationDiv.clientWidth)
-                    .attr("height", visualizationDiv.clientHeight);
+                    .attr("preserveAspectRatio", "xMidYMid meet")
+                    .attr("viewBox", `0 0 ${visualizationDiv.clientWidth} ${visualizationDiv.clientHeight}`);
+
 
                 const graph = response.data;
 
-                const color = d3.scaleOrdinal(d3.schemeCategory10);
+                const colorScheme1 = [
+                    "#0068da", "#aec7e8", "#ff7f0e", "#ffbb78", "#2ca02c", "#98df8a", "#d62728", "#ff9896",
+                    "#9467bd", "#c5b0d5", "#8c564b", "#c49c94", "#e377c2", "#f7b6d2", "#7f7f7f", "#c7c7c7",
+                    "#bcbd22", "#dbdb8d", "#17becf", "#9edae5", "#393b79", "#637939", "#8c6d31", "#843c39", 
+                    "#7b4173", "#636363"
+                ];
+
+                const color = d3.scaleOrdinal(colorScheme1);
 
                 const simulation = d3.forceSimulation()
                     .force("link", d3.forceLink().id(d => d.id).distance(100))
@@ -371,6 +403,20 @@
                     d.fx = null;
                     d.fy = null;
                 }
+
+                // Resize function
+                function resize() {
+                    svg.attr("viewBox", `0 0 ${visualizationDiv.clientWidth} ${visualizationDiv.clientHeight}`);
+                    simulation.force("center", d3.forceCenter(visualizationDiv.clientWidth / 2, visualizationDiv.clientHeight / 2));
+                    simulation.alpha(0.3).restart();
+                }
+
+                // Call resize on window resize
+                window.addEventListener('resize', resize);
+
+                // Initial call to resize
+                resize();
+                
             } catch (error) {
                 console.error('Error visualizing network:', error);
                 alert('Error visualizing network');
@@ -398,6 +444,7 @@
         document.getElementById('queryForm').addEventListener('submit', async function(event) {
             event.preventDefault();
             var queryType = document.getElementById('queryType').value;
+            var inferenceAlgorithm = document.getElementById('inferenceAlgorithm').value;
             var queryVars = document.getElementById('queryVars').value.split(',').map(s => s.trim());
             var evidence = JSON.parse(document.getElementById('evidence').value || '{}');
             var interventions = JSON.parse(document.getElementById('interventions').value || '{}');
@@ -405,6 +452,7 @@
 
             var data = {
                 query_type: queryType,
+                inference_algorithm: inferenceAlgorithm,
                 query_vars: queryVars,
                 evidence: evidence,
                 interventions: interventions

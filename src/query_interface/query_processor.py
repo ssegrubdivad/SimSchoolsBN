@@ -8,6 +8,7 @@ import logging
 import numpy as np
 
 from src.network_structure import BayesianNetwork
+from src.inference_engine.junction_tree import JunctionTree
 
 class QueryProcessor:
     """
@@ -27,20 +28,21 @@ class QueryProcessor:
     def __init__(self, model: BayesianNetwork):
         self.logger = logging.getLogger(__name__)
         self.model = model
-        self.inference_engine = None
-        self._initialize_inference_engine()
+        self.variable_elimination = None
+        self.junction_tree = None
+        self._initialize_inference_engines()
 
     def _initialize_inference_engine(self):
         try:
-            pgmpy_model = self._convert_to_pgmpy_model()
-            self.inference_engine = VariableElimination(pgmpy_model)
-            self.logger.info("Inference engine initialized successfully")
+            self.variable_elimination = VariableElimination(self._convert_to_pgmpy_model())
+            self.junction_tree = JunctionTree(self.model)
+            self.logger.info("Inference engines initialized successfully")
             
             # TODO: Consider implementing BeliefPropagation as an alternative inference method
             # self.belief_propagation = BeliefPropagation(pgmpy_model)
             
         except Exception as e:
-            self.logger.error(f"Failed to initialize inference engine: {str(e)}")
+            self.logger.error(f"Failed to initialize inference engines: {str(e)}")
             raise
 
     def _convert_to_pgmpy_model(self):
@@ -76,8 +78,8 @@ class QueryProcessor:
         )
     
     def process_query(self, query_type: str, query_vars: List[str], evidence: Dict[str, Any], interventions: Dict[str, Any] = None) -> Dict[str, Any]:
-        if not self.inference_engine:
-            raise ValueError("Inference engine not initialized. Unable to process query.")
+        if not self.variable_elimination or not self.junction_tree:
+            raise ValueError("Inference engines not initialized. Unable to process query.")
 
         try:
             if query_type == 'marginal':
@@ -98,30 +100,15 @@ class QueryProcessor:
 
     def _map_query(self, query_vars: List[str], evidence: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Performs a Maximum a Posteriori (MAP) query.
-
-        Note: This is a basic implementation. For very large or complex networks,
-        a more specialized algorithm might be more efficient.
+        Performs a Maximum a Posteriori (MAP) query using Junction Tree
         """
-        # Implement MAP query using VariableElimination
-        result = {}
-        for var in query_vars:
-            phi = self.inference_engine.query([var], evidence=evidence)[var]
-            map_val = max(phi.values, key=lambda x: phi.values[x])
-            result[var] = map_val
-        return result
+        return self.junction_tree.map_query(query_vars, evidence)
 
     def _mpe_query(self, evidence: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Performs a Most Probable Explanation (MPE) query.
-
-        Note: This is a basic implementation. For very large or complex networks,
-        a more specialized algorithm might be more efficient.
+        Performs a Most Probable Explanation (MPE) query using Junction Tree
         """
-        # Implement MPE query using VariableElimination
-        all_vars = list(self.model.nodes.keys())
-        query_vars = [var for var in all_vars if var not in evidence]
-        return self._map_query(query_vars, evidence)
+        return self.junction_tree.mpe_query(evidence)
 
     def temporal_query(self, query_vars: List[str], time_steps: int, evidence: Dict[str, Any] = None) -> Dict[str, List[float]]:
         if not isinstance(self.model, DynamicBayesianNetwork):
@@ -149,8 +136,8 @@ class QueryProcessor:
         return sorted(query_vars, key=lambda v: len(self.model.get_cpds(v).values))
 
     def _marginal_query(self, query_vars: List[str], evidence: Dict[str, Any]) -> Dict[str, List[float]]:
-        result = self.inference_engine.query(variables=query_vars, evidence=evidence)
-        return {var: result[var].values.tolist() for var in query_vars}
+        result = self.junction_tree.query(variables=query_vars, evidence=evidence)
+        return {var: result[var].tolist() for var in query_vars}
 
     # TODO: Implement method to switch between inference algorithms
     # def set_inference_algorithm(self, algorithm: str):
@@ -183,3 +170,9 @@ class QueryProcessor:
             intervened_model.add_cpds(cpd)
         
         return intervened_model
+
+    def set_inference_algorithm(self, algorithm: str):
+        if algorithm not in ["variable_elimination", "junction_tree"]:
+            raise ValueError(f"Unsupported inference algorithm: {algorithm}")
+        self.current_algorithm = algorithm
+        self.logger.info(f"Inference algorithm set to: {algorithm}")

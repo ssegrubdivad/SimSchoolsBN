@@ -1,4 +1,4 @@
-# app8.py
+# app9.py
 
 from flask import Flask, request, jsonify, render_template, send_file
 from functools import wraps
@@ -244,6 +244,7 @@ def query_model():
         return jsonify({'status': 'error', 'message': 'No data provided'}), 400
 
     query_type = data.get('query_type', 'marginal')
+    inference_algorithm = data.get('inference_algorithm', 'variable_elimination')
     query_vars = data.get('query_vars', [])
     evidence = data.get('evidence', {})
     interventions = data.get('interventions', {})
@@ -253,6 +254,8 @@ def query_model():
         return jsonify({'status': 'error', 'message': 'No query variables provided'}), 400
 
     try:
+        query_processor.set_inference_algorithm(inference_algorithm)
+        
         if query_type == 'temporal':
             if time_steps is None:
                 return jsonify({'status': 'error', 'message': 'Time steps must be provided for temporal queries'}), 400
@@ -260,7 +263,7 @@ def query_model():
         else:
             result = query_processor.process_query(query_type, query_vars, evidence, interventions)
         
-        logger.info(f"Query processed successfully: type={query_type}, vars={query_vars}")
+        logger.info(f"Query processed successfully: type={query_type}, algorithm={inference_algorithm}, vars={query_vars}")
         return jsonify({'status': 'success', 'result': result}), 200
     except ValueError as ve:
         logger.warning(f"Invalid query parameters: {str(ve)}")
