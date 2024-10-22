@@ -28,13 +28,15 @@ class QueryProcessor:
     def __init__(self, model: BayesianNetwork):
         self.logger = logging.getLogger(__name__)
         self.model = model
+        self.current_algorithm = "variable_elimination"  # Default algorithm
         self.variable_elimination = None
         self.junction_tree = None
         self._initialize_inference_engines()
 
-    def _initialize_inference_engine(self):
+    def _initialize_inference_engines(self):
         try:
-            self.variable_elimination = VariableElimination(self._convert_to_pgmpy_model())
+            pgmpy_model = self._convert_to_pgmpy_model()
+            self.variable_elimination = VariableElimination(pgmpy_model)
             self.junction_tree = JunctionTree(self.model)
             self.logger.info("Inference engines initialized successfully")
             
@@ -57,41 +59,54 @@ class QueryProcessor:
         return pgmpy_model
 
     def _create_placeholder_cpd(self, node):
-        # Create a placeholder CPD with uniform distribution
-        variable_card = len(node.states) if node.states else 2
-        parent_cards = [len(parent.states) if parent.states else 2 for parent in node.parents]
+        variable_card = len(node.states)
+        parent_cards = [len(parent.states) for parent in node.parents]
         
-        # Create a 2D array of uniform probabilities
-        if parent_cards:
-            cpd_values = np.ones([variable_card, np.prod(parent_cards, dtype=int)]) / variable_card
+        if node.distribution:
+            # If the node has a distribution, use it to create the CPD
+            values = node.distribution.get_parameters()['table']
+            if isinstance(values, dict):
+                # Convert dict to numpy array
+                values = np.array(list(values.values())).T
         else:
-            cpd_values = np.ones([variable_card, 1]) / variable_card
+            # If no distribution is available, create a uniform distribution
+            if parent_cards:
+                values = np.ones([variable_card, np.prod(parent_cards, dtype=int)]) / variable_card
+            else:
+                values = np.ones([variable_card, 1]) / variable_card
         
         evidence = [parent.id for parent in node.parents]
         
         return TabularCPD(
             variable=node.id,
             variable_card=variable_card,
-            values=cpd_values,
+            values=values,
             evidence=evidence,
             evidence_card=parent_cards
         )
     
     def process_query(self, query_type: str, query_vars: List[str], evidence: Dict[str, Any], interventions: Dict[str, Any] = None) -> Dict[str, Any]:
-        if not self.variable_elimination or not self.junction_tree:
+        if not hasattr(self, 'variable_elimination') or not hasattr(self, 'junction_tree'):
             raise ValueError("Inference engines not initialized. Unable to process query.")
 
         try:
+            if self.current_algorithm == "variable_elimination":
+                inference_engine = self.variable_elimination
+            elif self.current_algorithm == "junction_tree":
+                inference_engine = self.junction_tree
+            else:
+                raise ValueError(f"Invalid inference algorithm: {self.current_algorithm}")
+
             if query_type == 'marginal':
-                return self._marginal_query(query_vars, evidence)
+                return self._marginal_query(inference_engine, query_vars, evidence)
             elif query_type == 'conditional':
-                return self._conditional_query(query_vars, evidence)
+                return self._conditional_query(inference_engine, query_vars, evidence)
             elif query_type == 'interventional':
-                return self._interventional_query(query_vars, evidence, interventions)
+                return self._interventional_query(inference_engine, query_vars, evidence, interventions)
             elif query_type == 'map':
-                return self._map_query(query_vars, evidence)
+                return self._map_query(inference_engine, query_vars, evidence)
             elif query_type == 'mpe':
-                return self._mpe_query(evidence)
+                return self._mpe_query(inference_engine, evidence)
             else:
                 raise ValueError(f"Unsupported query type: {query_type}")
         except Exception as e:
@@ -135,8 +150,8 @@ class QueryProcessor:
         # Simple optimization: order variables by their number of values
         return sorted(query_vars, key=lambda v: len(self.model.get_cpds(v).values))
 
-    def _marginal_query(self, query_vars: List[str], evidence: Dict[str, Any]) -> Dict[str, List[float]]:
-        result = self.junction_tree.query(variables=query_vars, evidence=evidence)
+    def _marginal_query(self, inference_engine, query_vars: List[str], evidence: Dict[str, Any]) -> Dict[str, List[float]]:
+        result = inference_engine.query(variables=query_vars, evidence=evidence)
         return {var: result[var].tolist() for var in query_vars}
 
     # TODO: Implement method to switch between inference algorithms

@@ -257,7 +257,14 @@
                 alert('CPT uploaded successfully');
             } catch (error) {
                 console.error('Error uploading CPT:', error);
-                alert('Error uploading CPT');
+                let errorMessage = 'Error uploading CPT file.';
+                if (error.response && error.response.data) {
+                    errorMessage += ' ' + error.response.data.message;
+                    if (error.response.data.details) {
+                        errorMessage += '\n\nDetails:\n' + error.response.data.details;
+                    }
+                }
+                alert(errorMessage);
             }
         }
 
@@ -470,10 +477,22 @@
                 const response = await axios.post('/query', data, {
                     headers: { 'Authorization': 'Bearer ' + apiToken }
                 });
-                document.getElementById('queryResult').textContent = JSON.stringify(response.data, null, 2);
+                
+                // Format and display the query result
+                const resultContainer = document.getElementById('queryResult');
+                resultContainer.innerHTML = '<h3>Query Result:</h3>';
+                
+                if (response.data.status === 'success') {
+                    const result = response.data.result;
+                    const resultDiv = document.createElement('div');
+                    resultDiv.innerHTML = '<pre>' + JSON.stringify(result, null, 2) + '</pre>';
+                    resultContainer.appendChild(resultDiv);
+                } else {
+                    resultContainer.innerHTML += '<p>Error: ' + response.data.message + '</p>';
+                }
             } catch (error) {
                 console.error('Error querying network:', error);
-                alert('Error querying network');
+                document.getElementById('queryResult').innerHTML = '<p>Error querying network: ' + error.message + '</p>';
             }
         });
     </script>

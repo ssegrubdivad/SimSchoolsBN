@@ -16,6 +16,7 @@ class Node:
         self.parents = []
         self.children = []
         self.states = []
+        self.distribution = None
 
     def set_variable_type(self, variable_type: str):
         original_type = variable_type
@@ -64,6 +65,9 @@ class Node:
         markov_blanket.discard(self)
         return markov_blanket
 
+    def set_distribution(self, distribution):
+        self.distribution = distribution
+        
     def __str__(self) -> str:
         return f"Node(id={self.id}, name={self.name}, type={self.variable_type})"
 

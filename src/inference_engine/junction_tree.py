@@ -32,7 +32,10 @@ class JunctionTree:
         
         if node.distribution:
             # If the node has a distribution, use it to create the CPD
-            values = node.distribution.get_parameters()['probabilities']
+            values = node.distribution.get_parameters()['table']
+            if isinstance(values, dict):
+                # Convert dict to numpy array
+                values = np.array(list(values.values())).T
         else:
             # If no distribution is available, create a uniform distribution
             if parent_cards:

@@ -1,4 +1,4 @@
-# app9.py
+# app11.py
 
 from flask import Flask, request, jsonify, render_template, send_file
 from functools import wraps
@@ -59,7 +59,7 @@ db = SQLAlchemy()
 jwt = JWTManager()
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 def init_app(app):
@@ -201,36 +201,61 @@ def upload_cpt():
         return jsonify({"status": "error", "message": "No network structure available. Please upload a network first."}), 400
     
     if 'file' not in request.files:
-        return jsonify({"status": "error", "message": "No file part"}), 400
+        return jsonify({"status": "error", "message": "No file was uploaded. Please select a CPT file to upload."}), 400
     file = request.files['file']
     if file.filename == '':
-        return jsonify({"status": "error", "message": "No selected file"}), 400
+        return jsonify({"status": "error", "message": "No file was selected. Please choose a CPT file to upload."}), 400
     if file and file.filename.endswith('.cpt'):
         filename = secure_filename(file.filename)
         filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
         file.save(filepath)
         
         try:
-            parser = CPTParser()
-            cpts = parser.parse_file(filepath)
+            parser = CPTParser(bayes_net)
+            cpts = parser.parse_file(str(filepath))
             
+            # If we reach this point, all CPTs were parsed successfully
             for node_id, cpt in cpts.items():
-                node = bayes_net.get_cpds(node_id)
-                if node:
-                    bayes_net.remove_cpds(node)
+                existing_cpd = bayes_net.get_cpds(node_id)
+                if existing_cpd:
+                    bayes_net.remove_cpds(node_id)
                 bayes_net.add_cpds(cpt)
+
+            # Reinitialize the query processor with the updated Bayesian Network
+            global query_processor
+            query_processor = QueryProcessor(bayes_net)
             
             return jsonify({
                 "status": "success",
-                "message": "CPT file uploaded and parsed successfully",
-                "num_cpts": len(cpts),
-                "node_ids": list(cpts.keys())
+                "message": f"All {len(cpts)} CPTs uploaded and validated successfully.",
+                "uploaded_cpts": list(cpts.keys())
             }), 200
+        except ValueError as e:
+            error_message = f"Error in CPT file: {str(e)}"
+            logger.error(error_message)
+            return jsonify({
+                "status": "error", 
+                "message": "We encountered an error in your CPT file.",
+                "details": str(e)
+            }), 400
+        except KeyError as e:
+            error_message = f"Missing key in CPT file: {str(e)}"
+            logger.error(error_message)
+            return jsonify({
+                "status": "error", 
+                "message": "Error in CPT file structure. Missing key information.",
+                "details": f"Missing information for: {str(e)}"
+            }), 400
         except Exception as e:
-            logger.error(f"Error parsing CPT file: {str(e)}")
-            return jsonify({"status": "error", "message": f"Error parsing CPT file: {str(e)}"}), 400
+            error_message = f"An unexpected error occurred while processing the CPT file: {str(e)}"
+            logger.error(error_message, exc_info=True)
+            return jsonify({
+                "status": "error", 
+                "message": "An unexpected error occurred. Please check the server logs for details.",
+                "details": str(e)
+            }), 500
     else:
-        return jsonify({"status": "error", "message": "Invalid file type. Please upload a .cpt file"}), 400
+        return jsonify({"status": "error", "message": "Invalid file type. Please upload a .cpt file."}), 400
 
 @app.route('/query', methods=['POST'])
 @role_required('admin')
@@ -263,15 +288,13 @@ def query_model():
         else:
             result = query_processor.process_query(query_type, query_vars, evidence, interventions)
         
-        logger.info(f"Query processed successfully: type={query_type}, algorithm={inference_algorithm}, vars={query_vars}")
         return jsonify({'status': 'success', 'result': result}), 200
     except ValueError as ve:
-        logger.warning(f"Invalid query parameters: {str(ve)}")
         return jsonify({'status': 'error', 'message': str(ve)}), 400
     except Exception as e:
         logger.error(f"An error occurred in query_model: {str(e)}", exc_info=True)
         return jsonify({'status': 'error', 'message': 'An unexpected error occurred. Please check the logs for more information.'}), 500
-        
+
 @app.route('/get_network_structure', methods=['GET'])
 @role_required('admin')
 def get_network_structure():

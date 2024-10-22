@@ -1,6 +1,6 @@
 # src/network_structure/bayesian_network.py
 
-from typing import List, Dict, Tuple, Set
+from typing import List, Dict, Tuple, Set, Any
 from .node import Node
 from .edge import Edge
 
@@ -9,6 +9,7 @@ class BayesianNetwork:
         self.name = name
         self.nodes: Dict[str, Node] = {}
         self.edges: List[Edge] = []
+        self.cpds: Dict[str, Any] = {}
 
     def add_node(self, node: Node) -> None:
         if node.id not in self.nodes:
@@ -111,10 +112,24 @@ class BayesianNetwork:
         # For now, we'll just check if the graph is acyclic
         return not self.has_cycle()
 
-    def get_cpds(self):
-        # This method should return the CPDs for all nodes
-        # For now, we'll return an empty list as we haven't implemented CPDs yet
-        return []
+    def add_cpds(self, *cpds):
+        for cpd in cpds:
+            node_id = cpd.variable
+            if node_id not in self.nodes:
+                raise ValueError(f"Node {node_id} does not exist in the network")
+            self.cpds[node_id] = cpd
+            self.nodes[node_id].set_distribution(cpd)
+
+    def get_cpds(self, node_id: str = None):
+        if node_id is None:
+            return list(self.cpds.values())
+        return self.cpds.get(node_id)
+
+    def remove_cpds(self, *node_ids):
+        for node_id in node_ids:
+            if node_id in self.cpds:
+                del self.cpds[node_id]
+                self.nodes[node_id].set_distribution(None)
         
     def __str__(self) -> str:
         return f"BayesianNetwork(name={self.name}, nodes={len(self.nodes)}, edges={len(self.edges)})"
