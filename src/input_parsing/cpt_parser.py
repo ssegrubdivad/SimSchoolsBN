@@ -181,33 +181,52 @@ class CPTParser:
                     self.logger.debug(f"Parent values: {parent_values}")
                     self.logger.debug(f"Probabilities: {probabilities}")
                     if len(parent_values) != len(parents):
-                        raise ValueError(f"Line {line_num}: Mismatch in number of parent values. Expected {len(parents)}, got {len(parent_values)}.")
+                        raise ValueError(
+                            f"Error in CPT for node '{node_id}' on line {line_num}:\n"
+                            f"Expected {len(parents)} values (one for each of the following parents: {', '.join(parents)}) "
+                            f"but got the following {len(parent_values)} values: {', '.join(parent_values)}.\n\n"
+                            f"These numbers should match (either {len(parents)} and {len(parents)} or {len(parent_values)} and {len(parent_values)}, but not {len(parents)} and {len(parent_values)}), so, either there is a mistake in the parents listed or there is a mistake in the values listed in the table."
+                        )
                     if len(probabilities) != len(states):
-                        raise ValueError(f"Line {line_num}: Expected {len(states)} probabilities, got {len(probabilities)}")
+                        raise ValueError(
+                            f"Error in CPT for node '{node_id}' on line {line_num}:\n"
+                            f"Expected {len(states)} probabilities for states {states},\n"
+                            f"but got {len(probabilities)} values: {probabilities}"
+                        )
                     table[parent_values] = probabilities
                     valid_entries += 1
                     self.logger.debug(f"Added entry to table with parent_values={parent_values}, probabilities={probabilities}")
                     self.logger.debug(f"Current valid_entries count: {valid_entries}")
                 else:
-                    raise ValueError(f"Line {line_num}: Invalid format. Expected either a single probability list or parent values | probability list.")
+                    raise ValueError(
+                        f"Error in CPT for node '{node_id}' on line {line_num}:\n"
+                        f"Invalid format. Expected either:\n"
+                        f"1. A comma-separated list of probabilities (for nodes with no parents), or\n"
+                        f"2. parent_values | probability_values"
+                    )
+
             except ValueError as e:
-                self.logger.error(f"Error parsing line {line_num}: {str(e)}")
-                raise ValueError(f"Error parsing values on line {line_num}: {str(e)}")
+                if "could not convert string to float" in str(e):
+                    self.logger.error(f"Error parsing probabilities on line {line_num}: {str(e)}")
+                    raise ValueError(
+                        f"Error in CPT for node '{node_id}' on line {line_num}:\n"
+                        f"Invalid probability value found. All probabilities must be numbers."
+                    )
+                else:
+                    self.logger.error(f"Error parsing line {line_num}: {str(e)}")
+                    raise ValueError(f"Error parsing values on line {line_num}: {str(e)}")
 
         self.logger.debug(f"Finished processing all lines")
         self.logger.debug(f"Final table contents: {table}")
         self.logger.debug(f"Final valid_entries count: {valid_entries}")
         
         if valid_entries != expected_entries:
-            noParents = ""
-            if len(parents) == 1:
-                noParents = "parent"
-            else:
-                noParents = "parents"
+            noParents = "parent" if len(parents) == 1 else "parents"
             error_message = (
-                f"An incorrect number of combination entries were found in the CPT for node {node_id}. Because this node has {len(parents)} {noParents}, we calculate that it should contain {expected_entries} combination entries.\n\n"
-                f"We expected to find exactly {expected_entries} combination entries, but your file provided {valid_entries} for this node.\n\n"
-                f"Please provide all {expected_entries} combination entries. Remember that simplified or incomplete CPTs are not supported."
+                f"Error in CPT for node '{node_id}':\n"
+                f"This node has {len(parents)} {noParents} {parents}, requiring {expected_entries} combination entries.\n"
+                f"Found {valid_entries} entries in the file.\n"
+                f"Please provide exactly {expected_entries} combination entries."
             )
             self.logger.error(error_message)
             raise ValueError(error_message)
