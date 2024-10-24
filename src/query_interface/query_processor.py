@@ -12,7 +12,9 @@ from src.inference_engine.junction_tree import JunctionTree
 
 class QueryProcessor:
     """
-    Processes queries for Bayesian Networks in educational contexts.
+    Processes queries for Bayesian Networks, ensuring strict data integrity.
+    Never creates or modifies probability distributions - requires complete
+    user specification before performing any inference.
 
     Note on Implementation:
     This class currently uses a basic implementation for MAP and MPE queries.
@@ -24,28 +26,47 @@ class QueryProcessor:
     consider implementing or integrating specialized estimator methods for
     improved performance and accuracy in MAP and MPE queries.
     """
-
     def __init__(self, model: BayesianNetwork):
         self.logger = logging.getLogger(__name__)
         self.model = model
-        self.current_algorithm = "variable_elimination"  # Default algorithm
+        self.current_algorithm = "variable_elimination"
         self.variable_elimination = None
         self.junction_tree = None
-        self._initialize_inference_engines()
+        self.initialized = False
+        self.missing_distributions = self._get_missing_distributions()
+        
+        if not self.missing_distributions:
+            self._initialize_inference_engines()
 
-    def _initialize_inference_engines(self):
+    def _get_missing_distributions(self) -> List[str]:
+        """
+        Identify nodes that lack probability distributions.
+        Returns a list of node IDs that need distributions specified.
+        """
+        return [node.id for node in self.model.nodes.values() 
+                if node.distribution is None]
+
+    def _initialize_inference_engines(self) -> bool:
+        """
+        Initialize inference engines only if all distributions are specified.
+        Never creates default distributions.
+        """
+        missing = self._get_missing_distributions()
+        if missing:
+            missing_nodes = ", ".join(missing)
+            self.logger.warning(f"Cannot initialize inference engines - missing distributions for: {missing_nodes}")
+            return False
+
         try:
             pgmpy_model = self._convert_to_pgmpy_model()
             self.variable_elimination = VariableElimination(pgmpy_model)
             self.junction_tree = JunctionTree(self.model)
+            self.initialized = True
             self.logger.info("Inference engines initialized successfully")
-            
-            # TODO: Consider implementing BeliefPropagation as an alternative inference method
-            # self.belief_propagation = BeliefPropagation(pgmpy_model)
-            
+            return True
         except Exception as e:
             self.logger.error(f"Failed to initialize inference engines: {str(e)}")
-            raise
+            return False
 
     def _convert_to_pgmpy_model(self):
         pgmpy_model = PgmpyBayesianNetwork()
@@ -85,18 +106,51 @@ class QueryProcessor:
             evidence_card=parent_cards
         )
     
-    def process_query(self, query_type: str, query_vars: List[str], evidence: Dict[str, Any], interventions: Dict[str, Any] = None) -> Dict[str, Any]:
-        if not hasattr(self, 'variable_elimination') or not hasattr(self, 'junction_tree'):
-            raise ValueError("Inference engines not initialized. Unable to process query.")
+    def process_query(self, query_type: str, query_vars: List[str], 
+                 evidence: Dict[str, Any], 
+                 interventions: Dict[str, Any] = None) -> Dict[str, Any]:
+        """
+        Process a query, ensuring all required distributions are present.
+        Raises ValueError if distributions are missing.
+        
+        Args:
+            query_type: Type of query ('marginal', 'conditional', 'interventional', 'map', 'mpe')
+            query_vars: List of variables to query
+            evidence: Dictionary of evidence variables and their values
+            interventions: Optional dictionary of intervention variables and their values
 
+        Returns:
+            Dict[str, Any]: Query results
+
+        Raises:
+            ValueError: If distributions are missing or query type is invalid
+        """
+        # Check for missing distributions
+        missing = self._get_missing_distributions()
+        if missing:
+            missing_nodes = ", ".join(missing)
+            raise ValueError(
+                f"Cannot process query - missing probability distributions for nodes: "
+                f"{missing_nodes}. Please upload complete CPT specifications first."
+            )
+
+        # Initialize inference engines if needed
+        if not self.initialized and not self._initialize_inference_engines():
+            raise ValueError(
+                "Failed to initialize inference engines. Please ensure all "
+                "probability distributions are properly specified."
+            )
+
+        # Validate inference engine selection
+        if self.current_algorithm == "variable_elimination":
+            inference_engine = self.variable_elimination
+        elif self.current_algorithm == "junction_tree":
+            inference_engine = self.junction_tree
+        else:
+            raise ValueError(f"Invalid inference algorithm: {self.current_algorithm}")
+
+        # Process query based on type
         try:
-            if self.current_algorithm == "variable_elimination":
-                inference_engine = self.variable_elimination
-            elif self.current_algorithm == "junction_tree":
-                inference_engine = self.junction_tree
-            else:
-                raise ValueError(f"Invalid inference algorithm: {self.current_algorithm}")
-
             if query_type == 'marginal':
                 return self._marginal_query(inference_engine, query_vars, evidence)
             elif query_type == 'conditional':

@@ -72,9 +72,13 @@ class DiscreteDistribution(Distribution):
         """
         expected_combinations = 1
         for parent in self.parents:
+            # Check if parent is a discrete or continuous variable
             if parent not in self.node_states:
-                raise KeyError(f"Missing states for parent '{parent}' in variable '{self.variable}'")
-            expected_combinations *= len(self.node_states[parent])
+                # For continuous parents, we expect 3 ranges
+                expected_combinations *= 3
+            else:
+                # For discrete parents, use their states
+                expected_combinations *= len(self.node_states[parent])
         
         self.logger.debug(f"Variable: {self.variable}, Parents: {self.parents}")
         self.logger.debug(f"Expected combinations: {expected_combinations}")

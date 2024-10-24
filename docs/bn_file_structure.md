@@ -1,5 +1,5 @@
 # Bayesian Network Structure File (.bns)
-## Version: 1.1
+### Version: 1.2
 ## Description: [Optional description of the network]
 
 ## Metadata
@@ -11,10 +11,16 @@ META version [version number]
 ## Node Definitions
 NODE [node_id] [node_name] [variable_type] [additional_specs]
   DESCRIPTION [Optional description of the node]
-  STATES [comma-separated list of possible states for discrete variables]
-  RANGE [min,max] [For continuous variables, optional]
+  ### For discrete variables:
+  STATES [comma-separated list of possible states]
+  ### For continuous variables:
+  RANGE [min,max]  # Required for continuous variables
   TEMPORAL_INFO [Optional: specifications for temporal nodes]
   PLATE [Optional: plate notation for repeated structures]
+
+## Valid variable_type values are:
+###   discrete - For variables with enumerated states
+###   continuous - For variables with continuous numeric values
 
 ## Edge Definitions
 EDGE [parent_node_id] [child_node_id]
