@@ -1,4 +1,4 @@
-# app11.py
+# app12.py
 
 from flask import Flask, request, jsonify, render_template, send_file
 from functools import wraps
@@ -177,6 +177,17 @@ def upload_network():
             bayes_net = parser.parse_file(filepath)
             query_processor = QueryProcessor(bayes_net)
             
+            # Check for validation errors
+            if hasattr(query_processor, 'validation_errors'):
+                logger.warning(f"Network uploaded but has validation errors: {query_processor.validation_errors['message']}")
+                return jsonify({
+                    "status": "warning",
+                    "message": "Network structure uploaded but has validation issues",
+                    "validation_errors": query_processor.validation_errors['message'],
+                    "nodes": len(bayes_net.nodes),
+                    "edges": len(bayes_net.edges)
+                }), 200
+            
             logger.info(f"Network uploaded successfully: {len(bayes_net.nodes)} nodes, {len(bayes_net.edges)} edges")
             return jsonify({
                 "status": "success",
@@ -189,22 +200,34 @@ def upload_network():
             return jsonify({"status": "error", "message": str(ve)}), 400
         except Exception as e:
             logger.error(f"Error parsing network file: {str(e)}", exc_info=True)
-            return jsonify({"status": "error", "message": f"An unexpected error occurred while parsing the network file: {str(e)}"}), 500
+            return jsonify({
+                "status": "error", 
+                "message": f"An unexpected error occurred while parsing the network file: {str(e)}"
+            }), 500
     else:
         return jsonify({"status": "error", "message": "Invalid file type. Please upload a .bns file"}), 400
 
 @app.route('/upload_cpt', methods=['POST'])
 @role_required('admin')
 def upload_cpt():
-    global bayes_net
+    global bayes_net, query_processor
     if not bayes_net:
-        return jsonify({"status": "error", "message": "No network structure available. Please upload a network first."}), 400
+        return jsonify({
+            "status": "error",
+            "message": "No network structure available. Please upload a network first."
+        }), 400
     
     if 'file' not in request.files:
-        return jsonify({"status": "error", "message": "No file was uploaded. Please select a CPT file to upload."}), 400
+        return jsonify({
+            "status": "error",
+            "message": "No file was uploaded. Please select a CPT file to upload."
+        }), 400
     file = request.files['file']
     if file.filename == '':
-        return jsonify({"status": "error", "message": "No file was selected. Please choose a CPT file to upload."}), 400
+        return jsonify({
+            "status": "error",
+            "message": "No file was selected. Please choose a CPT file to upload."
+        }), 400
     if file and file.filename.endswith('.cpt'):
         filename = secure_filename(file.filename)
         filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
@@ -222,9 +245,17 @@ def upload_cpt():
                 bayes_net.add_cpds(cpt)
 
             # Reinitialize the query processor with the updated Bayesian Network
-            global query_processor
             query_processor = QueryProcessor(bayes_net)
             
+            # Check for validation errors
+            if hasattr(query_processor, 'validation_errors'):
+                return jsonify({
+                    "status": "warning",
+                    "message": "CPTs uploaded but there are validation issues",
+                    "validation_errors": query_processor.validation_errors['message'],
+                    "uploaded_cpts": list(cpts.keys())
+                }), 200
+
             return jsonify({
                 "status": "success",
                 "message": f"All {len(cpts)} CPTs uploaded and validated successfully.",
@@ -255,18 +286,27 @@ def upload_cpt():
                 "details": str(e)
             }), 500
     else:
-        return jsonify({"status": "error", "message": "Invalid file type. Please upload a .cpt file."}), 400
-
+        return jsonify({
+            "status": "error",
+            "message": "Invalid file type. Please upload a .cpt file."
+        }), 400
+        
 @app.route('/query', methods=['POST'])
 @role_required('admin')
 def query_model():
     global query_processor
     if not query_processor:
-        return jsonify({'status': 'error', 'message': 'Query processor not initialized. Please upload a network first.'}), 400
+        return jsonify({
+            'status': 'error',
+            'message': 'Query processor not initialized. Please upload a network first.'
+        }), 400
 
     data = request.get_json()
     if not data:
-        return jsonify({'status': 'error', 'message': 'No data provided'}), 400
+        return jsonify({
+            'status': 'error',
+            'message': 'No data provided'
+        }), 400
 
     query_type = data.get('query_type', 'marginal')
     inference_algorithm = data.get('inference_algorithm', 'variable_elimination')
@@ -276,24 +316,40 @@ def query_model():
     time_steps = data.get('time_steps', None)
 
     if not query_vars and query_type != 'mpe':
-        return jsonify({'status': 'error', 'message': 'No query variables provided'}), 400
+        return jsonify({
+            'status': 'error',
+            'message': 'No query variables provided'
+        }), 400
 
     try:
         query_processor.set_inference_algorithm(inference_algorithm)
         
         if query_type == 'temporal':
             if time_steps is None:
-                return jsonify({'status': 'error', 'message': 'Time steps must be provided for temporal queries'}), 400
+                return jsonify({
+                    'status': 'error',
+                    'message': 'Time steps must be provided for temporal queries'
+                }), 400
             result = query_processor.temporal_query(query_vars, time_steps, evidence)
         else:
             result = query_processor.process_query(query_type, query_vars, evidence, interventions)
         
         return jsonify({'status': 'success', 'result': result}), 200
+        
     except ValueError as ve:
-        return jsonify({'status': 'error', 'message': str(ve)}), 400
+        # Handle validation errors specifically
+        return jsonify({
+            'status': 'error',
+            'message': str(ve),
+            'error_type': 'validation_error'
+        }), 400
     except Exception as e:
         logger.error(f"An error occurred in query_model: {str(e)}", exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An unexpected error occurred. Please check the logs for more information.'}), 500
+        return jsonify({
+            'status': 'error',
+            'message': 'An unexpected error occurred while processing the query. Please check that all probability distributions are properly specified and supported.',
+            'error_type': 'processing_error'
+        }), 500
 
 @app.route('/get_network_structure', methods=['GET'])
 @role_required('admin')

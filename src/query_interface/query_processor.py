@@ -33,10 +33,133 @@ class QueryProcessor:
         self.variable_elimination = None
         self.junction_tree = None
         self.initialized = False
-        self.missing_distributions = self._get_missing_distributions()
+        # Validate distributions before attempting to initialize inference engines
+        validation_result = self._validate_distributions()
+        if not validation_result['is_valid']:
+            self.logger.error(f"Distribution validation failed: {validation_result['message']}")
+            self.validation_errors = validation_result
+        else:
+            self.missing_distributions = self._get_missing_distributions()
+            if not self.missing_distributions:
+                self._initialize_inference_engines()
+
+    def _validate_distributions(self) -> Dict[str, Any]:
+        """
+        Validates all distributions in the network to ensure they are properly specified
+        and compatible with inference operations.
         
-        if not self.missing_distributions:
-            self._initialize_inference_engines()
+        Returns:
+            Dict containing:
+                is_valid (bool): Whether all distributions are valid
+                message (str): Description of validation result
+                errors (List[Dict]): List of specific validation errors
+        """
+        errors = []
+        
+        # First pass: check for missing distributions
+        missing_distributions = []
+        for node_id, node in self.model.nodes.items():
+            self.logger.debug(f"Validating distribution for node {node_id}")
+            if node.distribution is None:
+                errors.append({
+                    'node': node_id,
+                    'error_type': 'missing_distribution',
+                    'message': f"Node {node_id} has no probability distribution specified"
+                })
+                continue
+                
+            try:
+                params = node.distribution.get_parameters()
+                self.logger.debug(f"Node {node_id} parameters: {params}")
+            except Exception as e:
+                self.logger.error(f"Error getting parameters for node {node_id}: {str(e)}")
+                errors.append({
+                    'node': node_id,
+                    'error_type': 'parameter_error',
+                    'message': f"Error getting parameters for node {node_id}: {str(e)}"
+                })
+        
+        if missing_distributions:
+            return {
+                'is_valid': False,
+                'message': "Distribution validation failed with the following errors:\n" + 
+                          "\n".join([f"- Node {node_id} has no probability distribution specified" 
+                                    for node_id in missing_distributions]),
+                'errors': [{'node': node_id, 'error_type': 'missing_distribution'} 
+                          for node_id in missing_distributions],
+                'type': 'missing_distributions'  # Add this to help client distinguish error types
+            }
+        
+        # Second pass: validate distribution parameters
+        for node_id, node in self.model.nodes.items():
+            try:
+                params = node.distribution.get_parameters()
+                
+                if node.variable_type == 'discrete':
+                    if not node.states:
+                        errors.append({
+                            'node': node_id,
+                            'error_type': 'missing_states',
+                            'message': f"- Discrete node {node_id} has no states defined"
+                        })
+                    
+                elif node.variable_type == 'continuous':
+                    self.logger.debug(f"\nValidating continuous node: {node_id}")
+                    dist_type = getattr(node.distribution, 'distribution_type', None)
+                    self.logger.debug(f"Distribution type: {dist_type}")
+                    
+                    params = node.distribution.get_parameters()
+                    self.logger.debug(f"Full parameters from distribution: {params}")
+                    
+                    if dist_type == 'gaussian':
+                        required_params = ['mean', 'variance']
+                    elif dist_type == 'truncated_gaussian':
+                        required_params = ['mean', 'variance', 'lower', 'upper']
+                    elif dist_type == 'clg':
+                        required_params = ['mean_base', 'coefficients', 'variance', 'continuous_parents']
+                    else:
+                        self.logger.debug(f"Unknown distribution type: {dist_type}")
+                        errors.append({
+                            'node': node_id,
+                            'error_type': 'unknown_distribution',
+                            'message': f"- Node {node_id} has unknown or unspecified distribution type"
+                        })
+                        continue
+                    
+                    distribution_params = params.get('parameters', {}).get((), {})
+                    self.logger.debug(f"Extracted distribution parameters: {distribution_params}")
+                    
+                    for param in required_params:
+                        if param not in distribution_params:
+                            self.logger.debug(f"Missing required parameter: {param}")
+                            errors.append({
+                                'node': node_id,
+                                'error_type': 'missing_parameter',
+                                'message': f"- Node {node_id} missing required parameter: {param}"
+                            })
+                
+            except Exception as e:
+                errors.append({
+                    'node': node_id,
+                    'error_type': 'validation_error',
+                    'message': f"- Error validating distribution for node {node_id}: {str(e)}"
+                })
+
+        if errors:
+            error_messages = "\n".join([error['message'] for error in errors])
+            return {
+                'is_valid': False,
+                'message': f"Distribution validation failed with the following errors:\n{error_messages}",
+                'errors': errors,
+                'type': 'parameter_validation'  # Add this to help client distinguish error types
+            }
+        
+        return {
+            'is_valid': True,
+            'message': "All distributions validated successfully",
+            'errors': [],
+            'type': 'success'
+        }
 
     def _get_missing_distributions(self) -> List[str]:
         """
@@ -110,7 +233,7 @@ class QueryProcessor:
                  evidence: Dict[str, Any], 
                  interventions: Dict[str, Any] = None) -> Dict[str, Any]:
         """
-        Process a query, ensuring all required distributions are present.
+        Process a query, ensuring all required distributions are present and valid.
         Raises ValueError if distributions are missing.
         
         Args:
@@ -125,6 +248,10 @@ class QueryProcessor:
         Raises:
             ValueError: If distributions are missing or query type is invalid
         """
+        # Check if we have validation errors
+        if hasattr(self, 'validation_errors'):
+            raise ValueError(self.validation_errors['message'])
+
         # Check for missing distributions
         missing = self._get_missing_distributions()
         if missing:

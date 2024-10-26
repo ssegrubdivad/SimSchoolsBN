@@ -14,23 +14,28 @@ class CLGDistribution(Distribution):
         self.discrete_parents = discrete_parents
         self.parameters = None
         self.logger = logging.getLogger(__name__)
+        self.distribution_type = 'clg'
 
-    def set_parameters(self, params: Dict[str, Any]) -> None:
+    def set_parameters(self, parameters: Dict[str, Any]) -> None:
+        self.logger.debug(f"Setting CLG parameters for {self.variable}: {parameters}")
+
         """
         Set the parameters for the CLG distribution.
         
         Args:
-            params: Dictionary containing:
-                - parameters: Dict containing:
+            parameters: Dictionary containing:
+                parameters: Dict containing:
                     - mean_base: float
                     - coefficients: List[float]
                     - variance: float
                     - continuous_parents: List[str]
         """
-        if "parameters" not in params:
+        if "parameters" not in parameters:
             raise ValueError("Parameters dictionary must contain 'parameters' key")
+                
+        params = parameters["parameters"]
             
-        parameters = params["parameters"]
+        # Validate required parameters
         required_params = {
             'mean_base': float,
             'coefficients': list,
@@ -39,24 +44,24 @@ class CLGDistribution(Distribution):
         
         # Validate all required parameters are present and of correct type
         for param, param_type in required_params.items():
-            if param not in parameters:
+            if param not in params:
                 raise ValueError(f"Missing required parameter '{param}'")
-            if not isinstance(parameters[param], param_type):
+            if not isinstance(params[param], param_type):
                 raise ValueError(f"Parameter '{param}' must be of type {param_type.__name__}")
-                
+                    
         # Validate coefficients match continuous parents
-        if len(parameters['coefficients']) != len(self.continuous_parents):
+        if len(params['coefficients']) != len(self.continuous_parents):
             raise ValueError(
-                f"Number of coefficients ({len(parameters['coefficients'])}) must match "
+                f"Number of coefficients ({len(params['coefficients'])}) must match "
                 f"number of continuous parents ({len(self.continuous_parents)})"
             )
-            
+                
         # Validate variance is positive
-        if parameters['variance'] <= 0:
+        if params['variance'] <= 0:
             raise ValueError("Variance must be positive")
-            
-        self.parameters = parameters
-        self.logger.debug(f"Set CLG parameters for {self.variable}: {parameters}")
+                
+        self.parameters = params
+        self.logger.debug(f"Set CLG parameters for {self.variable}: {params}")
 
     def get_probability(self, value: float, parent_values: Dict[str, Any]) -> float:
         """Get the probability density for a specific value given parent values."""
@@ -95,9 +100,19 @@ class CLGDistribution(Distribution):
         """Get the distribution parameters."""
         if self.parameters is None:
             raise ValueError("Distribution parameters not set")
-        return {
+            
+        self.logger.debug(f"Getting CLG parameters for {self.variable}")
+        self.logger.debug(f"Raw parameters: {self.parameters}")
+        
+        # Format parameters for validator expectations
+        formatted_params = {
             'variable': self.variable,
             'continuous_parents': self.continuous_parents,
             'discrete_parents': self.discrete_parents,
-            'parameters': self.parameters
+            'parameters': {
+                (): self.parameters  # Store parameters under empty tuple key
+            }
         }
+        
+        self.logger.debug(f"Formatted parameters: {formatted_params}")
+        return formatted_params

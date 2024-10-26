@@ -6,6 +6,7 @@
     <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
     <script src="https://d3js.org/d3.v7.min.js"></script>
     <style>
+/*        For general layout*/
         html, body {
             margin: 0;
             padding: 0;
@@ -101,6 +102,27 @@
             width: 100%;
             height: 100%;
         }
+
+/*        For the query results*/
+        #queryVisualization {
+            margin-top: 20px;
+            padding: 20px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+
+        .visualization-controls {
+            margin-bottom: 20px;
+        }
+
+        #variableSelect {
+            margin-left: 10px;
+        }
+
+        #visualizationContainer svg {
+            max-width: 100%;
+            height: auto;
+        }
     </style>
 </head>
 <body>
@@ -178,6 +200,13 @@
                     <button type="submit">Query</button>
                 </form>
                 <div id="queryResult"></div>
+                <div id="queryVisualization" style="display: none;">
+                    <div class="visualization-controls">
+                        <label for="variableSelect">Select Variable:</label>
+                        <select id="variableSelect" class="border rounded p-1"></select>
+                    </div>
+                    <div id="visualizationContainer" style="height: 400px; width: 100%; margin-top: 20px;"></div>
+                </div>
             </div>
         </div>
 
@@ -229,10 +258,26 @@
                     }
                 });
                 console.log(response.data);
-                alert('Network uploaded successfully');
+                
+                if (response.data.status === 'warning') {
+                    if (response.data.validation_errors.includes('no probability distribution specified')) {
+                        alert(
+                            'Network structure successfully uploaded!\n\n' +
+                            'Next step: Please upload a CPT (Conditional Probability Table) file to specify ' +
+                            'probability distributions for the network nodes.'
+                        );
+                    } else {
+                        alert(
+                            'Network uploaded but has validation issues:\n\n' + 
+                            response.data.validation_errors
+                        );
+                    }
+                } else if (response.data.status === 'success') {
+                    alert('Network uploaded and validated successfully');
+                }
             } catch (error) {
                 console.error('Error uploading network:', error);
-                alert('Error uploading network');
+                alert('Error uploading network: ' + (error.response?.data?.message || error.message));
             }
         }
 
@@ -254,11 +299,53 @@
                     }
                 });
                 console.log(response.data);
-                alert('CPT uploaded successfully');
+                
+                if (response.data.status === 'warning') {
+                    let warningMessage = 'CPTs uploaded but have validation issues:\n\n';
+                    
+                    // Group similar errors together
+                    const errors = response.data.validation_errors.split('\n');
+                    const missingParams = errors.filter(e => e.includes('missing required parameter'));
+                    const distributionErrors = errors.filter(e => e.includes('CLGDistribution'));
+                    const otherErrors = errors.filter(e => !e.includes('missing required parameter') && !e.includes('CLGDistribution'));
+                    
+                    // Format missing parameters more clearly
+                    if (missingParams.length > 0) {
+                        const node = missingParams[0].split('Node ')[1].split(' missing')[0];
+                        warningMessage += `${node} is missing required parameters:\n`;
+                        missingParams.forEach(error => {
+                            const param = error.split('parameter: ')[1];
+                            warningMessage += `  • ${param}\n`;
+                        });
+                        warningMessage += '\n';
+                    }
+                    
+                    // Format distribution type errors
+                    if (distributionErrors.length > 0) {
+                        warningMessage += 'Distribution type validation errors:\n';
+                        distributionErrors.forEach(error => {
+                            const node = error.split('node ')[1].split(':')[0];
+                            warningMessage += `  • ${node}: Invalid distribution configuration\n`;
+                        });
+                        warningMessage += '\n';
+                    }
+                    
+                    // Add any other errors
+                    if (otherErrors.length > 0) {
+                        warningMessage += 'Additional validation issues:\n';
+                        otherErrors.forEach(error => {
+                            warningMessage += `  • ${error.trim()}\n`;
+                        });
+                    }
+                    
+                    alert(warningMessage);
+                } else if (response.data.status === 'success') {
+                    alert('CPTs uploaded and validated successfully');
+                }
             } catch (error) {
                 console.error('Error uploading CPT:', error);
                 let errorMessage = 'Error uploading CPT file.';
-                if (error.response && error.response.data) {
+                if (error.response?.data) {
                     errorMessage += ' ' + error.response.data.message;
                     if (error.response.data.details) {
                         errorMessage += '\n\nDetails:\n' + error.response.data.details;
@@ -430,6 +517,157 @@
             }
         }
 
+        function visualizeQueryResult(queryResult, queryType) {
+            const visualizationDiv = document.getElementById('queryVisualization');
+            const variableSelect = document.getElementById('variableSelect');
+            const container = document.getElementById('visualizationContainer');
+            
+            visualizationDiv.style.display = 'block';
+            container.innerHTML = ''; // Clear previous visualization
+
+            // Get variables from query result
+            const variables = Object.keys(queryResult.result || {});
+            
+            // Update variable selection dropdown
+            variableSelect.innerHTML = variables
+                .map(v => `<option value="${v}">${v}</option>`)
+                .join('');
+
+            function createVisualization(variable) {
+                container.innerHTML = ''; // Clear container
+                
+                const data = queryResult.result[variable];
+                
+                // Determine if the data is an array (discrete distribution) or object (continuous/temporal)
+                const isDiscrete = Array.isArray(data);
+                
+                const width = container.clientWidth;
+                const height = container.clientHeight;
+                const margin = { top: 40, right: 40, bottom: 60, left: 60 };
+                
+                const svg = d3.select(container)
+                    .append('svg')
+                    .attr('width', width)
+                    .attr('height', height);
+                    
+                const chart = svg.append('g')
+                    .attr('transform', `translate(${margin.left},${margin.top})`);
+                    
+                const chartWidth = width - margin.left - margin.right;
+                const chartHeight = height - margin.top - margin.bottom;
+
+                if (isDiscrete) {
+                    // Create bar chart for discrete variables
+                    const x = d3.scaleBand()
+                        .range([0, chartWidth])
+                        .padding(0.1);
+
+                    const y = d3.scaleLinear()
+                        .range([chartHeight, 0]);
+
+                    // Format data for bar chart
+                    const barData = data.map((value, index) => ({
+                        state: `State ${index + 1}`,
+                        probability: value
+                    }));
+
+                    x.domain(barData.map(d => d.state));
+                    y.domain([0, 1]); // Probabilities are always between 0 and 1
+
+                    // Add X axis
+                    chart.append('g')
+                        .attr('transform', `translate(0,${chartHeight})`)
+                        .call(d3.axisBottom(x))
+                        .selectAll('text')
+                        .style('text-anchor', 'end')
+                        .attr('dx', '-.8em')
+                        .attr('dy', '.15em')
+                        .attr('transform', 'rotate(-45)');
+
+                    // Add Y axis
+                    chart.append('g')
+                        .call(d3.axisLeft(y));
+
+                    // Add bars
+                    chart.selectAll('rect')
+                        .data(barData)
+                        .enter()
+                        .append('rect')
+                        .attr('x', d => x(d.state))
+                        .attr('width', x.bandwidth())
+                        .attr('y', d => y(d.probability))
+                        .attr('height', d => chartHeight - y(d.probability))
+                        .attr('fill', '#3492eb');
+
+                    // Add labels
+                    chart.append('text')
+                        .attr('x', chartWidth / 2)
+                        .attr('y', chartHeight + margin.bottom - 10)
+                        .style('text-anchor', 'middle')
+                        .text('States');
+
+                    chart.append('text')
+                        .attr('transform', 'rotate(-90)')
+                        .attr('y', -margin.left + 20)
+                        .attr('x', -chartHeight / 2)
+                        .style('text-anchor', 'middle')
+                        .text('Probability');
+
+                } else {
+                    // Create line chart for continuous/temporal data
+                    const data = Object.entries(queryResult.result[variable])
+                        .map(([key, value]) => ({ point: key, value: value }));
+
+                    const x = d3.scaleLinear()
+                        .domain(d3.extent(data, d => +d.point))
+                        .range([0, chartWidth]);
+
+                    const y = d3.scaleLinear()
+                        .domain(d3.extent(data, d => +d.value))
+                        .range([chartHeight, 0]);
+
+                    // Add X axis
+                    chart.append('g')
+                        .attr('transform', `translate(0,${chartHeight})`)
+                        .call(d3.axisBottom(x));
+
+                    // Add Y axis
+                    chart.append('g')
+                        .call(d3.axisLeft(y));
+
+                    // Add line
+                    const line = d3.line()
+                        .x(d => x(+d.point))
+                        .y(d => y(+d.value));
+
+                    chart.append('path')
+                        .datum(data)
+                        .attr('fill', 'none')
+                        .attr('stroke', '#3492eb')
+                        .attr('stroke-width', 2)
+                        .attr('d', line);
+                }
+
+                // Add title
+                svg.append('text')
+                    .attr('x', width / 2)
+                    .attr('y', margin.top / 2)
+                    .attr('text-anchor', 'middle')
+                    .style('font-size', '16px')
+                    .text(`${queryType} Query Result for ${variable}`);
+            }
+
+            // Create initial visualization
+            if (variables.length > 0) {
+                createVisualization(variables[0]);
+            }
+
+            // Update visualization when variable selection changes
+            variableSelect.addEventListener('change', (event) => {
+                createVisualization(event.target.value);
+            });
+        }
+
         document.getElementById('uploadNetworkForm').addEventListener('submit', uploadNetwork);
         document.getElementById('uploadCPTForm').addEventListener('submit', uploadCPT);
 
@@ -487,12 +725,16 @@
                     const resultDiv = document.createElement('div');
                     resultDiv.innerHTML = '<pre>' + JSON.stringify(result, null, 2) + '</pre>';
                     resultContainer.appendChild(resultDiv);
+                    
+                    // Add visualization
+                    visualizeQueryResult(response.data, data.query_type);
                 } else {
                     resultContainer.innerHTML += '<p>Error: ' + response.data.message + '</p>';
                 }
             } catch (error) {
                 console.error('Error querying network:', error);
-                document.getElementById('queryResult').innerHTML = '<p>Error querying network: ' + error.message + '</p>';
+                document.getElementById('queryResult').innerHTML = 
+                    '<p>Error querying network: ' + error.message + '</p>';
             }
         });
     </script>

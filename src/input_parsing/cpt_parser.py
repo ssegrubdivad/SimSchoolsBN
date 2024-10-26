@@ -144,45 +144,101 @@ class CPTParser:
                 table_content.append(line)
             elif in_distribution_section:
                 distribution_content.append(line)
+
+        distribution = None
         
         if cpt_type == 'DISCRETE':
             if not states:
                 raise ValueError(f"No states defined for discrete node {node_id}")
             self.node_states[node_id] = states
             probabilities = self._parse_table(table_content, node_id, parents, states)
-            return DiscreteDistribution(node_id, parents, states, probabilities, self.node_states)
+            distribution = DiscreteDistribution(node_id, parents, states, probabilities, self.node_states)
+        
         elif cpt_type == 'CONTINUOUS':
-            return self._parse_continuous_distribution(node_id, parents, distribution_content)
+            # Use the dedicated continuous distribution parser
+            distribution = self._parse_continuous_distribution(node_id, parents, distribution_content)
+
         elif cpt_type == 'CLG':
-            return self._parse_clg_distribution(node_id, parents, distribution_content)
+            # Use the dedicated CLG distribution parser
+            distribution = self._parse_clg_distribution(node_id, parents, distribution_content)
+            # dist_params = self._parse_distribution(distribution_content)
+            # # Extract continuous parents
+            # continuous_parents = []
+            # if 'continuous_parents' in dist_params:
+            #     if isinstance(dist_params['continuous_parents'], str):
+            #         continuous_parents = [p.strip() for p in dist_params['continuous_parents'].split(',')]
+            #     else:
+            #         continuous_parents = dist_params['continuous_parents']
+            # # Get discrete parents (any parent not in continuous_parents)
+            # discrete_parents = [p for p in parents if p not in continuous_parents]
+            
+            # distribution = CLGDistribution(node_id, continuous_parents, discrete_parents)
+            # # Set distribution type explicitly for validation
+            # distribution.distribution_type = 'clg'
+            # distribution.set_parameters({"parameters": dist_params})
+        
         else:
             raise ValueError(f"Unsupported CPT type for node {node_id}: {cpt_type}")
+        
+        if distribution is None:
+            raise ValueError(f"Failed to create distribution for node {node_id}")
+        
+        return distribution
 
     def _parse_continuous_distribution(self, node_id: str, parents: List[str], distribution_lines: List[str]) -> ContinuousDistribution:
         """Parse a continuous distribution specification."""
         distribution_params = {}
         
+        self.logger.debug(f"\nStarting continuous distribution parsing for node {node_id}")
+        self.logger.debug(f"Distribution lines to parse:")
+        for line in distribution_lines:
+            self.logger.debug(f"  {line}")
+        
         # Parse the distribution parameters
         for line in distribution_lines:
             line = line.strip()
             if not line or line.startswith('#'):
+                self.logger.debug(f"Skipping line: '{line}'")
                 continue
             try:
+                self.logger.debug(f"Processing line: '{line}'")
                 key, value = [part.strip() for part in line.split('=')]
+                self.logger.debug(f"Extracted key: '{key}', value: '{value}'")
+                
                 # Handle different parameter types
-                try:
-                    distribution_params[key] = eval(value)
-                except:
-                    distribution_params[key] = value
+                if key == 'type':
+                    # Keep distribution type as string without evaluation
+                    distribution_params[key] = value.strip()
+                    self.logger.debug(f"Set type parameter to: {distribution_params[key]}")
+                else:
+                    # Try to convert to float for numeric values
+                    try:
+                        distribution_params[key] = float(value)
+                        self.logger.debug(f"Set numeric parameter {key} to: {distribution_params[key]}")
+                    except ValueError:
+                        distribution_params[key] = value.strip()
+                        self.logger.debug(f"Set string parameter {key} to: {distribution_params[key]}")
             except ValueError as e:
+                self.logger.error(f"Error processing line '{line}': {str(e)}")
                 raise ValueError(f"Invalid distribution parameter format in line: {line}")
+
+        self.logger.debug(f"Collected parameters: {distribution_params}")
+        
+        # Get distribution type
+        dist_type = distribution_params.get('type', 'gaussian')
+        self.logger.debug(f"Distribution type determined as: {dist_type}")
         
         # Create and initialize the distribution
-        dist = ContinuousDistribution(node_id, parents, 
-                                    distribution_params.get('type', 'gaussian'))
+        dist = ContinuousDistribution(node_id, parents, dist_type)
+        self.logger.debug(f"Created ContinuousDistribution with type: {dist.distribution_type}")
         
-        # Set the parameters in the format expected by ContinuousDistribution
-        dist.set_parameters({"parameters": {(): distribution_params}})
+        # Format parameters properly
+        formatted_params = {"parameters": {(): distribution_params}}
+        self.logger.debug(f"Formatted parameters structure: {formatted_params}")
+        
+        # Set the parameters
+        dist.set_parameters(formatted_params)
+        self.logger.debug(f"Parameters set in distribution object. Distribution parameters are now: {dist.parameters}")
         
         return dist
 
@@ -190,38 +246,52 @@ class CPTParser:
         """Parse a CLG distribution specification."""
         distribution_params = {}
         
+        self.logger.debug(f"Starting CLG parsing for node {node_id}")
+        self.logger.debug(f"Distribution lines: {distribution_lines}")
+        
         # Parse the distribution parameters
         for line in distribution_lines:
             line = line.strip()
             if not line or line.startswith('#'):
+                self.logger.debug(f"Skipping line: {line}")
                 continue
             try:
+                self.logger.debug(f"Processing line: {line}")
                 key, value = [part.strip() for part in line.split('=')]
+                self.logger.debug(f"Parsed key: {key}, value: {value}")
+                
                 # Handle different parameter types
                 if key == 'continuous_parents':
                     # Parse list of continuous parents
                     value = [p.strip() for p in value.split(',')]
+                    self.logger.debug(f"Parsed continuous parents: {value}")
                 elif key == 'coefficients':
                     # Parse list of coefficients
                     value = eval(value)  # Safely evaluate list literal
+                    self.logger.debug(f"Parsed coefficients: {value}")
                 else:
                     # Parse numeric values
                     try:
                         value = float(value)
+                        self.logger.debug(f"Parsed numeric value: {value}")
                     except ValueError:
                         value = value.strip()
+                        self.logger.debug(f"Parsed string value: {value}")
                 distribution_params[key] = value
+                
             except ValueError as e:
+                self.logger.error(f"Error processing line '{line}': {str(e)}")
                 raise ValueError(f"Invalid CLG parameter format in line: {line}")
+        
+        self.logger.debug(f"Final distribution parameters: {distribution_params}")
         
         # Validate required parameters
         required_params = ['continuous_parents', 'mean_base', 'coefficients', 'variance']
         missing_params = [param for param in required_params if param not in distribution_params]
         if missing_params:
-            raise ValueError(
-                f"Missing required parameters for CLG distribution in node {node_id}: "
-                f"{', '.join(missing_params)}"
-            )
+            self.logger.error(f"Missing parameters for node {node_id}: {missing_params}")
+            self.logger.error(f"Available parameters: {list(distribution_params.keys())}")
+            raise ValueError(f"Missing required parameter(s): {', '.join(missing_params)}")
         
         # Create CLG distribution
         continuous_parents = distribution_params['continuous_parents']
@@ -229,7 +299,9 @@ class CPTParser:
         clg = CLGDistribution(node_id, continuous_parents, discrete_parents)
         
         # Set parameters
-        clg.set_parameters({"parameters": distribution_params})
+        formatted_params = {"parameters": distribution_params}  # Create properly formatted parameters
+        self.logger.debug(f"Setting formatted parameters for CLG: {formatted_params}")
+        clg.set_parameters(formatted_params)  # Pass the formatted parameters
         
         return clg
 
@@ -414,17 +486,68 @@ class CPTParser:
         return expected_entries
 
     def _parse_distribution(self, distribution_lines: List[str]) -> Dict[str, Any]:
+        """Parse a distribution specification."""
         distribution = {}
+        
         for line in distribution_lines:
-            if line.strip() == '':
+            line = line.strip()
+            if not line or line.startswith('#'):
                 continue
+                
             try:
-                key, value = line.split('=')
-                distribution[key.strip()] = eval(value.strip())
-            except (ValueError, SyntaxError) as e:
-                self.logger.error(f"Error parsing distribution line '{line}': {str(e)}")
-                raise ValueError(f"Invalid distribution format in line: {line}")
-        return distribution
+                key, value = [part.strip() for part in line.split('=')]
+                # Handle different parameter types
+                if key == 'type':
+                    # Keep distribution type as string without evaluation
+                    distribution[key] = value.strip()
+                elif key == 'continuous_parents':
+                    # Parse list of continuous parents
+                    value = value.strip()
+                    if value.startswith('[') and value.endswith(']'):
+                        # Handle list format
+                        parents = value[1:-1].split(',')
+                    else:
+                        # Handle simple comma-separated format
+                        parents = value.split(',')
+                    distribution[key] = [p.strip() for p in parents if p.strip()]
+                elif key == 'coefficients':
+                    # Safely evaluate list of numbers
+                    try:
+                        distribution[key] = eval(value)
+                        if not isinstance(distribution[key], list):
+                            raise ValueError(f"Coefficients must be a list, got {type(distribution[key])}")
+                    except Exception as e:
+                        raise ValueError(f"Invalid coefficients format: {value}. Error: {str(e)}")
+                else:
+                    # Try to convert to float for numeric values
+                    try:
+                        distribution[key] = float(value)
+                    except ValueError:
+                        # If not a number, keep as string
+                        distribution[key] = value.strip()
+                
+                self.logger.debug(f"Parsed parameter {key}: {distribution[key]}")
+                
+            except ValueError as e:
+                self.logger.error(f"Invalid distribution parameter format in line: {line}")
+                raise ValueError(f"Invalid distribution parameter format in line: {line}. Error: {str(e)}")
+        
+        # Add debug logging for final distribution parameters
+        self.logger.debug(f"Complete parsed distribution parameters: {distribution}")
+        
+        # Format parameters for ContinuousDistribution
+        if distribution.get('type') in ['gaussian', 'truncated_gaussian']:
+            params = {
+                'parameters': {
+                    (): {  # Empty tuple for no parents
+                        k: v for k, v in distribution.items() 
+                        if k not in ['type', 'continuous_parents', 'coefficients']
+                    }
+                }
+            }
+            return params
+            
+        return {"parameters": distribution}
 
     def get_metadata(self) -> Dict[str, str]:
         return self.metadata
