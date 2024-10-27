@@ -1,5 +1,5 @@
-# Mathematical Foundation for Custom Inference Engine
 ## SimSchools BN Project
+# Mathematical Foundation for Custom Inference Engine
 
 ### 1. Distribution Types and Properties
 
@@ -302,7 +302,7 @@ This mathematical foundation ensures that:
 3. Users must provide complete and correct specifications
 4. Error conditions are clearly identified and reported
 
-# Summary
+## Summary
 
 The intent of this document is to establish a rigorous framework for inference that:
 
