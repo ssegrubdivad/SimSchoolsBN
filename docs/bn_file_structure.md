@@ -1,3 +1,4 @@
+## SimSchools BN Project
 # Bayesian Network Structure File (.bns)
 ### Version: 1.2
 ## Description: [Optional description of the network]
