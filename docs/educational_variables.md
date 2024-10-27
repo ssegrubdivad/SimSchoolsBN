@@ -1,3 +1,4 @@
+## SimSchools BN Project
 # Educational Variables in SimSchools BN
 
 ## Overview
