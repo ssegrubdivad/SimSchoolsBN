@@ -6,6 +6,13 @@ import numpy as np
 import logging
 from enum import Enum
 
+from ..education_models.locus_control import (
+    ControlLevel,
+    ControlScope,
+    ControlValidator,
+    ControlledVariable
+)
+
 class EvidenceType(Enum):
     """Types of evidence that can be incorporated."""
     HARD = "hard"       # Exact observations
@@ -368,3 +375,276 @@ class EvidencePropagator:
             range_width = likelihood.upper_bound - likelihood.lower_bound
             return 1.0 - np.exp(-1.0 / (likelihood.variance * range_width))
         return 0.0
+
+@dataclass
+class ControlledEvidence(Evidence):
+    """
+    Evidence with control level information.
+    Maintains all Evidence properties with added control awareness.
+    """
+    control_level: ControlLevel
+    requires_coordination: bool = False
+    coordination_levels: Optional[Set[ControlLevel]] = None
+    authority_path: Optional[List[ControlLevel]] = None
+
+class ControlAwareEvidencePropagator(EvidencePropagator):
+    """
+    Enhanced evidence propagator with locus of control awareness.
+    Maintains exact evidence handling while enforcing control constraints.
+    """
+    def __init__(self, model: BayesianNetwork):
+        super().__init__(model)
+        self.control_validator = ControlValidator()
+        self.variable_controls: Dict[str, ControlledVariable] = {}
+        self._initialize_control_mappings()
+        self.pending_coordination: Dict[str, Set[ControlLevel]] = {}
+
+    def _initialize_control_mappings(self) -> None:
+        """Initialize control mappings for all variables."""
+        for node_id, node in self.model.nodes.items():
+            if hasattr(node, 'control_scope'):
+                self.variable_controls[node_id] = ControlledVariable(
+                    name=node_id,
+                    control_scope=node.control_scope,
+                    validator=self.control_validator
+                )
+
+    def add_evidence(self, 
+                    evidence: Union[Evidence, ControlledEvidence],
+                    control_level: Optional[ControlLevel] = None) -> bool:
+        """
+        Add evidence with control level validation.
+        
+        Args:
+            evidence: Evidence to add
+            control_level: Control level providing evidence
+            
+        Returns:
+            bool: Whether evidence was successfully added
+            
+        Raises:
+            ValueError: If evidence is invalid or control level lacks authority
+        """
+        # Convert to ControlledEvidence if necessary
+        if isinstance(evidence, Evidence) and not isinstance(evidence, ControlledEvidence):
+            if control_level is None:
+                raise ValueError("Control level must be provided for non-controlled evidence")
+                
+            evidence = self._convert_to_controlled_evidence(evidence, control_level)
+
+        # Validate evidence
+        if not self._validate_controlled_evidence(evidence):
+            raise ValueError(f"Invalid evidence for variable {evidence.variable}")
+
+        # Check control level authority
+        if not self._check_evidence_authority(evidence):
+            raise ValueError(
+                f"Control level {evidence.control_level.name} lacks authority "
+                f"for variable {evidence.variable}"
+            )
+
+        # Check if coordination is required
+        if self._requires_coordination(evidence):
+            self._handle_coordination_requirement(evidence)
+            return False  # Evidence pending coordination
+
+        # Add evidence with control information
+        return super().add_evidence(evidence)
+
+    def _convert_to_controlled_evidence(self,
+                                      evidence: Evidence,
+                                      control_level: ControlLevel) -> ControlledEvidence:
+        """Convert standard evidence to controlled evidence."""
+        variable = evidence.variable
+        requires_coordination = False
+        coordination_levels = None
+        authority_path = None
+        
+        if variable in self.variable_controls:
+            controlled_var = self.variable_controls[variable]
+            requires_coordination = controlled_var.requires_coordination(control_level)
+            if requires_coordination:
+                coordination_levels = controlled_var.control_scope.secondary_levels
+            
+            primary_level = controlled_var.control_scope.primary_level
+            authority_path = self.control_validator.get_influence_path(
+                control_level,
+                primary_level
+            )
+
+        return ControlledEvidence(
+            variable=evidence.variable,
+            value=evidence.value,
+            evidence_type=evidence.evidence_type,
+            likelihood=evidence.likelihood,
+            precision=evidence.precision,
+            control_level=control_level,
+            requires_coordination=requires_coordination,
+            coordination_levels=coordination_levels,
+            authority_path=authority_path
+        )
+
+    def _validate_controlled_evidence(self, evidence: ControlledEvidence) -> bool:
+        """
+        Validate controlled evidence.
+        Maintains all standard evidence validation plus control validation.
+        """
+        # First perform standard evidence validation
+        if not super().validate(evidence):
+            return False
+
+        # Check if variable has control information
+        if evidence.variable in self.variable_controls:
+            controlled_var = self.variable_controls[evidence.variable]
+            
+            # Validate control level can modify variable
+            if not controlled_var.can_be_modified_by(evidence.control_level):
+                self.logger.warning(
+                    f"Control level {evidence.control_level.name} cannot modify "
+                    f"variable {evidence.variable}"
+                )
+                return False
+                
+            # Validate authority path if provided
+            if evidence.authority_path:
+                if not self._validate_authority_path(
+                    evidence.authority_path,
+                    controlled_var.control_scope.primary_level
+                ):
+                    return False
+
+        return True
+
+    def _check_evidence_authority(self, evidence: ControlledEvidence) -> bool:
+        """Check if control level has authority to provide evidence."""
+        if evidence.variable not in self.variable_controls:
+            return True  # No control restrictions
+            
+        controlled_var = self.variable_controls[evidence.variable]
+        return controlled_var.can_be_modified_by(evidence.control_level)
+
+    def _requires_coordination(self, evidence: ControlledEvidence) -> bool:
+        """Check if evidence requires coordination with other control levels."""
+        if not evidence.requires_coordination:
+            return False
+            
+        if evidence.variable not in self.variable_controls:
+            return False
+            
+        controlled_var = self.variable_controls[evidence.variable]
+        return controlled_var.requires_coordination(evidence.control_level)
+
+    def _handle_coordination_requirement(self, evidence: ControlledEvidence) -> None:
+        """Handle evidence requiring coordination."""
+        if evidence.coordination_levels:
+            self.pending_coordination[evidence.variable] = evidence.coordination_levels.copy()
+            
+            self.logger.info(
+                f"Evidence for {evidence.variable} requires coordination with "
+                f"levels: {[level.name for level in evidence.coordination_levels]}"
+            )
+
+    def coordinate_evidence(self,
+                          variable: str,
+                          control_level: ControlLevel,
+                          approve: bool) -> None:
+        """
+        Coordinate evidence approval across control levels.
+        
+        Args:
+            variable: Variable requiring coordination
+            control_level: Control level providing coordination
+            approve: Whether this level approves the evidence
+        """
+        if variable not in self.pending_coordination:
+            raise ValueError(f"No pending coordination for variable {variable}")
+            
+        if control_level not in self.pending_coordination[variable]:
+            raise ValueError(
+                f"Control level {control_level.name} not required for "
+                f"coordination of variable {variable}"
+            )
+            
+        self.pending_coordination[variable].remove(control_level)
+        
+        if not approve:
+            # Clear pending coordination if any level disapproves
+            del self.pending_coordination[variable]
+            self.logger.info(
+                f"Evidence for {variable} rejected by {control_level.name}"
+            )
+        elif not self.pending_coordination[variable]:
+            # All levels have approved
+            self.logger.info(
+                f"Evidence for {variable} approved by all required levels"
+            )
+            del self.pending_coordination[variable]
+            # Process the evidence here
+
+    def _validate_authority_path(self,
+                               path: List[ControlLevel],
+                               target_level: ControlLevel) -> bool:
+        """Validate an authority path is correct."""
+        if not path:
+            return False
+            
+        if path[-1] != target_level:
+            self.logger.warning(
+                f"Authority path does not lead to target level {target_level.name}"
+            )
+            return False
+            
+        for i in range(len(path) - 1):
+            if not self.control_validator.validate_control_path(
+                path[i],
+                path[i + 1],
+                "influence"
+            ):
+                self.logger.warning(
+                    f"Invalid control path segment: {path[i].name} -> {path[i+1].name}"
+                )
+                return False
+                
+        return True
+
+    def create_evidence_factors(self) -> Dict[str, 'Factor']:
+        """
+        Create evidence factors with control level influence.
+        Maintains exact factor creation while incorporating control weights.
+        """
+        evidence_factors = {}
+        
+        for var, evidence in self.evidence.items():
+            if isinstance(evidence, ControlledEvidence):
+                # Create factor with control level influence
+                factor = self._create_controlled_evidence_factor(evidence)
+            else:
+                # Create standard evidence factor
+                factor = super()._create_evidence_factor(evidence)
+                
+            if factor is not None:
+                evidence_factors[var] = factor
+                
+        return evidence_factors
+
+    def _create_controlled_evidence_factor(self,
+                                         evidence: ControlledEvidence) -> Optional['Factor']:
+        """
+        Create evidence factor with control level influence.
+        Maintains factor properties while incorporating control weights.
+        """
+        # Get base evidence factor
+        factor = super()._create_evidence_factor(evidence)
+        if factor is None:
+            return None
+            
+        # Apply control level influence weight if applicable
+        if evidence.variable in self.variable_controls:
+            controlled_var = self.variable_controls[evidence.variable]
+            influence_weight = controlled_var.get_influence_weight(evidence.control_level)
+            
+            if influence_weight < 1.0:
+                # Scale factor by influence weight
+                factor = self._scale_evidence_factor(factor, influence_weight)
+                
+        return factor

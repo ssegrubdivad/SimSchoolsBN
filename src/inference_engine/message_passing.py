@@ -31,6 +31,13 @@ from .messages import (
 from .messages.operators import MessageOperator
 from ..probability_distribution.factors import Factor
 
+from ..education_models.locus_control import (
+    ControlLevel,
+    ControlScope,
+    ControlValidator,
+    ControlledVariable
+)
+
 class NodeType(Enum):
     """Types of nodes in the factor graph."""
     VARIABLE = "variable"
@@ -803,3 +810,256 @@ class MessagePassingEngine:
         if not hasattr(self, '_last_delta'):
             return float('inf')
         return self._last_delta
+
+class ControlAwareMessageEngine(MessagePassingEngine):
+    """
+    Enhanced message passing engine with locus of control awareness.
+    Maintains all mathematical guarantees while enforcing control constraints.
+    """
+    def __init__(self, model: BayesianNetwork):
+        super().__init__(model)
+        self.control_validator = ControlValidator()
+        self.variable_controls: Dict[str, ControlledVariable] = {}
+        self._initialize_control_mappings()
+
+    def _initialize_control_mappings(self) -> None:
+        """Initialize control mappings for all variables in the network."""
+        for node_id, node in self.model.nodes.items():
+            if hasattr(node, 'control_scope'):
+                self.variable_controls[node_id] = ControlledVariable(
+                    name=node_id,
+                    control_scope=node.control_scope,
+                    validator=self.control_validator
+                )
+
+    def run_inference(self,
+                     query_variables: Set[str],
+                     evidence: Optional[Dict[str, Evidence]] = None,
+                     control_level: Optional[ControlLevel] = None,
+                     **kwargs) -> InferenceResult:
+        """
+        Run inference with control level awareness.
+        
+        Args:
+            query_variables: Variables to query
+            evidence: Evidence to incorporate
+            control_level: Control level requesting inference
+            **kwargs: Additional arguments
+            
+        Returns:
+            InferenceResult containing computed beliefs and control information
+            
+        Raises:
+            ValueError: If control level lacks necessary authority
+        """
+        # Validate control level authority for query variables
+        if control_level is not None:
+            self._validate_query_authority(query_variables, control_level)
+            
+        # Validate control level authority for evidence
+        if evidence is not None and control_level is not None:
+            self._validate_evidence_authority(evidence, control_level)
+        
+        # Create control-aware messages
+        controlled_messages = self._create_controlled_messages(
+            control_level=control_level
+        )
+        
+        # Run inference with control-aware messages
+        result = super().run_inference(
+            query_variables=query_variables,
+            evidence=evidence,
+            **kwargs
+        )
+        
+        # Add control information to result
+        result.control_info = {
+            'level': control_level,
+            'authority_paths': self._get_authority_paths(query_variables, control_level)
+        }
+        
+        return result
+
+    def _validate_query_authority(self,
+                                variables: Set[str],
+                                control_level: ControlLevel) -> None:
+        """
+        Validate control level authority for query variables.
+        Ensures proper authorization while maintaining inference validity.
+        """
+        for var in variables:
+            if var in self.variable_controls:
+                controlled_var = self.variable_controls[var]
+                if not controlled_var.can_be_modified_by(control_level):
+                    raise ValueError(
+                        f"Control level {control_level.name} lacks authority "
+                        f"to query variable {var}"
+                    )
+
+    def _validate_evidence_authority(self,
+                                   evidence: Dict[str, Evidence],
+                                   control_level: ControlLevel) -> None:
+        """
+        Validate control level authority for evidence.
+        Ensures proper authorization while maintaining evidence validity.
+        """
+        for var, ev in evidence.items():
+            if var in self.variable_controls:
+                controlled_var = self.variable_controls[var]
+                if not controlled_var.can_be_modified_by(control_level):
+                    raise ValueError(
+                        f"Control level {control_level.name} lacks authority "
+                        f"to provide evidence for variable {var}"
+                    )
+
+    def _create_controlled_messages(self,
+                                  control_level: Optional[ControlLevel]) -> Dict[Tuple[str, str], Message]:
+        """
+        Create messages with control level influence weights.
+        Maintains exact message computation while incorporating control weights.
+        """
+        messages = {}
+        
+        for source_id in self.model.nodes:
+            for target_id in self.model.nodes:
+                if (source_id, target_id) not in self.message_dependencies:
+                    continue
+                    
+                message = self._compute_controlled_message(
+                    source_id,
+                    target_id,
+                    control_level
+                )
+                
+                if message is not None:
+                    messages[(source_id, target_id)] = message
+                    
+        return messages
+
+    def _compute_controlled_message(self,
+                                  source_id: str,
+                                  target_id: str,
+                                  control_level: Optional[ControlLevel]) -> Optional[Message]:
+        """
+        Compute message with control level influence.
+        Maintains mathematical precision while incorporating control weights.
+        """
+        # Get base message
+        base_message = self.computation_engine.compute_message(
+            source_id,
+            target_id,
+            self._get_incoming_messages(source_id)
+        )
+        
+        if control_level is None:
+            return base_message
+            
+        # Apply control level influence weights
+        if source_id in self.variable_controls:
+            controlled_var = self.variable_controls[source_id]
+            influence_weight = controlled_var.get_influence_weight(control_level)
+            
+            if influence_weight < 1.0:
+                # Scale message by influence weight while maintaining mathematical properties
+                return self._scale_message_influence(base_message, influence_weight)
+                
+        return base_message
+
+    def _scale_message_influence(self,
+                               message: Message,
+                               weight: float) -> Message:
+        """
+        Scale message by influence weight.
+        Maintains distribution properties while applying control scaling.
+        """
+        if isinstance(message, DiscreteMessage):
+            return self._scale_discrete_message(message, weight)
+        elif isinstance(message, GaussianMessage):
+            return self._scale_gaussian_message(message, weight)
+        elif isinstance(message, CLGMessage):
+            return self._scale_clg_message(message, weight)
+        
+        return message
+
+    def _scale_discrete_message(self,
+                              message: DiscreteMessage,
+                              weight: float) -> DiscreteMessage:
+        """Scale discrete message while maintaining probability sum."""
+        new_probs = {}
+        uniform_weight = (1.0 - weight) / len(message.probabilities)
+        
+        for states, prob in message.probabilities.items():
+            # Combine weighted probability with uniform distribution
+            new_probs[states] = weight * prob + uniform_weight
+            
+        return DiscreteMessage(
+            message.source_id,
+            message.target_id,
+            message.variables,
+            message.direction,
+            message.states,
+            new_probs
+        )
+
+    def _scale_gaussian_message(self,
+                              message: GaussianMessage,
+                              weight: float) -> GaussianMessage:
+        """Scale Gaussian message while maintaining distribution validity."""
+        # Scale precision by weight
+        old_precision = 1.0 / message.variance
+        new_precision = weight * old_precision
+        new_variance = 1.0 / new_precision if new_precision > 0 else float('inf')
+        
+        return GaussianMessage(
+            message.source_id,
+            message.target_id,
+            message.variables,
+            message.direction,
+            message.mean,
+            new_variance
+        )
+
+    def _scale_clg_message(self,
+                          message: CLGMessage,
+                          weight: float) -> CLGMessage:
+        """Scale CLG message while maintaining conditional relationships."""
+        new_params = {}
+        
+        for config, params in message.parameters.items():
+            # Scale coefficients and variance while maintaining mean base
+            new_params[config] = {
+                'mean_base': params['mean_base'],
+                'coefficients': [c * weight for c in params['coefficients']],
+                'variance': params['variance'] / weight if weight > 0 else float('inf')
+            }
+            
+        return CLGMessage(
+            message.source_id,
+            message.target_id,
+            message.continuous_var,
+            message.continuous_parents,
+            message.discrete_parents,
+            message.direction,
+            message.discrete_states,
+            new_params
+        )
+
+    def _get_authority_paths(self,
+                           variables: Set[str],
+                           control_level: Optional[ControlLevel]) -> Dict[str, List[ControlLevel]]:
+        """Get authority paths for queried variables."""
+        paths = {}
+        
+        if control_level is None:
+            return paths
+            
+        for var in variables:
+            if var in self.variable_controls:
+                controlled_var = self.variable_controls[var]
+                target_level = controlled_var.control_scope.primary_level
+                paths[var] = self.control_validator.get_influence_path(
+                    control_level,
+                    target_level
+                )
+                
+        return paths

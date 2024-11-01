@@ -708,3 +708,224 @@ class TestFactorOperations:
 
             for c1, c2 in zip(actual['coefficients'], expected['coefficients']):
                 assert abs(c1 - c2) < case.error_bound
+
+    @pytest.fixture
+    def educational_edge_cases(self) -> List[PrecisionTestCase]:
+        """Create test cases for education-specific edge scenarios."""
+        return [
+            # Zero Budget Case
+            PrecisionTestCase(
+                name="zero_budget_allocation",
+                input_data={
+                    'factor': CLGFactor(
+                        name="ResourceAllocation",
+                        continuous_var="TeacherResources",
+                        continuous_parents=["Budget"],
+                        discrete_parents=["AllocationStrategy"],
+                        discrete_states={"AllocationStrategy": ["optimal", "suboptimal"]},
+                        parameters={
+                            ("optimal",): {
+                                'mean_base': 0.0,  # Zero budget
+                                'coefficients': [1.0],
+                                'variance': 1e-8
+                            },
+                            ("suboptimal",): {
+                                'mean_base': 0.0,  # Zero budget
+                                'coefficients': [0.8],
+                                'variance': 1e-8
+                            }
+                        }
+                    )
+                },
+                expected_result={
+                    ("optimal",): {
+                        'mean_base': 0.0,
+                        'coefficients': [1.0],
+                        'variance': 1e-8
+                    },
+                    ("suboptimal",): {
+                        'mean_base': 0.0,
+                        'coefficients': [0.8],
+                        'variance': 1e-8
+                    }
+                },
+                error_bound=1e-10,
+                required_precision=1e-10,
+                numerical_requirements={
+                    'zero_handling': True,
+                    'coefficient_preservation': True
+                },
+                preconditions=["Valid CLG with zero base"],
+                postconditions=["Valid resource allocation model"]
+            ),
+
+            # Perfect Prediction Case
+            PrecisionTestCase(
+                name="perfect_teacher_prediction",
+                input_data={
+                    'factor': CLGFactor(
+                        name="StudentPerformance",
+                        continuous_var="ActualScore",
+                        continuous_parents=["PredictedScore"],
+                        discrete_parents=["TeacherExperience"],
+                        discrete_states={"TeacherExperience": ["experienced", "novice"]},
+                        parameters={
+                            ("experienced",): {
+                                'mean_base': 0.0,
+                                'coefficients': [1.0],  # Perfect correlation
+                                'variance': 1e-10  # Near-perfect prediction
+                            },
+                            ("novice",): {
+                                'mean_base': -5.0,  # Slight negative bias
+                                'coefficients': [1.0],
+                                'variance': 2.0  # Higher uncertainty
+                            }
+                        }
+                    )
+                },
+                expected_result={
+                    ("experienced",): {
+                        'mean_base': 0.0,
+                        'coefficients': [1.0],
+                        'variance': 1e-10
+                    },
+                    ("novice",): {
+                        'mean_base': -5.0,
+                        'coefficients': [1.0],
+                        'variance': 2.0
+                    }
+                },
+                error_bound=1e-10,
+                required_precision=1e-10,
+                numerical_requirements={
+                    'perfect_correlation_handling': True,
+                    'variance_contrast': True
+                },
+                preconditions=["Valid CLG with perfect correlation"],
+                postconditions=["Valid performance prediction model"]
+            ),
+
+            # Hierarchical Dependency Case
+            PrecisionTestCase(
+                name="district_school_classroom_hierarchy",
+                input_data={
+                    'district_factor': CLGFactor(
+                        name="DistrictEffect",
+                        continuous_var="ResourceLevel",
+                        continuous_parents=[],
+                        discrete_parents=["DistrictPolicy"],
+                        discrete_states={"DistrictPolicy": ["equity", "performance"]},
+                        parameters={
+                            ("equity",): {
+                                'mean_base': 1000000.0,  # $1M base
+                                'coefficients': [],
+                                'variance': 100000.0
+                            },
+                            ("performance",): {
+                                'mean_base': 1200000.0,  # $1.2M base
+                                'coefficients': [],
+                                'variance': 200000.0
+                            }
+                        }
+                    ),
+                    'school_factor': CLGFactor(
+                        name="SchoolEffect",
+                        continuous_var="SchoolResource",
+                        continuous_parents=["ResourceLevel"],
+                        discrete_parents=["SchoolSize"],
+                        discrete_states={"SchoolSize": ["small", "large"]},
+                        parameters={
+                            ("small",): {
+                                'mean_base': 0.0,
+                                'coefficients': [0.3],  # 30% of district resources
+                                'variance': 10000.0
+                            },
+                            ("large",): {
+                                'mean_base': 0.0,
+                                'coefficients': [0.5],  # 50% of district resources
+                                'variance': 20000.0
+                            }
+                        }
+                    )
+                },
+                expected_result={
+                    ("equity", "small"): {
+                        'mean_base': 300000.0,  # 30% of $1M
+                        'variance': 39000.0  # Combined variance
+                    },
+                    ("equity", "large"): {
+                        'mean_base': 500000.0,  # 50% of $1M
+                        'variance': 45000.0
+                    },
+                    ("performance", "small"): {
+                        'mean_base': 360000.0,  # 30% of $1.2M
+                        'variance': 48000.0
+                    },
+                    ("performance", "large"): {
+                        'mean_base': 600000.0,  # 50% of $1.2M
+                        'variance': 70000.0
+                    }
+                },
+                error_bound=1e-8,  # Larger due to scale
+                required_precision=1e-8,
+                numerical_requirements={
+                    'scale_handling': True,
+                    'hierarchy_preservation': True,
+                    'variance_propagation': True
+                },
+                preconditions=["Valid district and school factors"],
+                postconditions=["Valid hierarchical resource model"]
+            )
+        ]
+
+    def test_zero_budget_allocation(self, numerical_framework, educational_edge_cases):
+        """Test factor behavior with zero budget allocation."""
+        case = educational_edge_cases[0]
+        factor = case.input_data['factor']
+        
+        # Verify factor maintains validity with zero base
+        validation = factor.validate()
+        assert validation.is_valid
+        
+        # Check parameters
+        for config in case.expected_result:
+            actual = factor.parameters[config]
+            expected = case.expected_result[config]
+            
+            assert abs(actual['mean_base']) < case.error_bound  # Zero base
+            assert actual['variance'] > 0  # Still valid variance
+            assert actual['coefficients'][0] > 0  # Positive resource relationship
+
+    def test_perfect_prediction(self, numerical_framework, educational_edge_cases):
+        """Test factor behavior with perfect teacher predictions."""
+        case = educational_edge_cases[1]
+        factor = case.input_data['factor']
+        
+        # Verify contrast between experience levels
+        experienced_params = factor.parameters[("experienced",)]
+        novice_params = factor.parameters[("novice",)]
+        
+        assert experienced_params['variance'] < novice_params['variance']
+        assert abs(experienced_params['coefficients'][0] - 1.0) < case.error_bound
+
+    def test_hierarchical_dependency(self, numerical_framework, educational_edge_cases):
+        """Test hierarchical resource allocation relationships."""
+        case = educational_edge_cases[2]
+        district_factor = case.input_data['district_factor']
+        school_factor = case.input_data['school_factor']
+        
+        # Test multiplication maintains hierarchical relationships
+        result = district_factor.multiply(school_factor)
+        
+        for config in case.expected_result:
+            actual = result.parameters[config]
+            expected = case.expected_result[config]
+            
+            # Check mean preservation through hierarchy
+            relative_error = abs(actual['mean_base'] - expected['mean_base']) / expected['mean_base']
+            assert relative_error < case.error_bound
+            
+            # Check variance propagation
+            assert actual['variance'] > 0
+            relative_var_error = abs(actual['variance'] - expected['variance']) / expected['variance']
+            assert relative_var_error < case.error_bound
