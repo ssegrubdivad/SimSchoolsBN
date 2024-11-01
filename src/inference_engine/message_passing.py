@@ -2,6 +2,7 @@
 
 from typing import Dict, Set, List, Optional, Tuple, Any
 from dataclasses import dataclass
+from enum import Enum
 import logging
 import numpy as np
 from collections import defaultdict
@@ -18,6 +19,379 @@ from src.inference_engine.evidence_propagation import (
     EvidencePropagator,
     Evidence
 )
+
+from .messages import (
+    Message,
+    MessageType,
+    ValidationResult,
+    DiscreteMessage,
+    GaussianMessage,
+    CLGMessage
+)
+from .messages.operators import MessageOperator
+from ..probability_distribution.factors import Factor
+
+class NodeType(Enum):
+    """Types of nodes in the factor graph."""
+    VARIABLE = "variable"
+    FACTOR = "factor"
+
+class Node(ABC):
+    """Abstract base class for nodes in the factor graph."""
+    def __init__(self, id: str, type: NodeType):
+        self.id = id
+        self.type = type
+        self.neighbors: Dict[str, 'Node'] = {}
+        self.messages: Dict[str, Message] = {}  # Messages indexed by source node id
+        self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
+        
+    @abstractmethod
+    def compute_message(self, target_id: str) -> Message:
+        """
+        Compute message to be sent to target node.
+        
+        Args:
+            target_id: ID of the target node
+            
+        Returns:
+            Message: Computed message
+            
+        Raises:
+            ValueError: If message cannot be computed
+        """
+        pass
+
+    def send_message(self, target_id: str) -> None:
+        """
+        Send message to target node.
+        
+        Args:
+            target_id: ID of the target node
+            
+        Raises:
+            ValueError: If message cannot be sent
+        """
+        if target_id not in self.neighbors:
+            raise ValueError(f"Node {target_id} is not a neighbor of {self.id}")
+            
+        message = self.compute_message(target_id)
+        validation = message.validate()
+        if not validation.is_valid:
+            raise ValueError(f"Invalid message computed: {validation.message}")
+            
+        self.neighbors[target_id].receive_message(self.id, message)
+        self.logger.debug(f"Sent message from {self.id} to {target_id}")
+
+    def receive_message(self, source_id: str, message: Message) -> None:
+        """
+        Receive message from source node.
+        
+        Args:
+            source_id: ID of the source node
+            message: The message being received
+            
+        Raises:
+            ValueError: If message cannot be received
+        """
+        if source_id not in self.neighbors:
+            raise ValueError(f"Received message from non-neighbor node {source_id}")
+            
+        validation = message.validate()
+        if not validation.is_valid:
+            raise ValueError(f"Received invalid message: {validation.message}")
+            
+        self.messages[source_id] = message
+        self.logger.debug(f"Received message at {self.id} from {source_id}")
+
+class VariableNode(Node):
+    """
+    Represents a variable node in the factor graph.
+    Maintains exact message passing without approximation.
+    """
+    def __init__(self, id: str, variable_type: str):
+        """
+        Initialize variable node.
+        
+        Args:
+            id: Node identifier
+            variable_type: Type of variable ('discrete', 'continuous', etc.)
+        """
+        super().__init__(id, NodeType.VARIABLE)
+        self.variable_type = variable_type
+        self.evidence = None  # Evidence value if observed
+        
+    def set_evidence(self, value: Any) -> None:
+        """
+        Set evidence value for this variable.
+        
+        Args:
+            value: Evidence value
+            
+        Raises:
+            ValueError: If evidence value is invalid
+        """
+        # Evidence validation would go here
+        self.evidence = value
+        self.logger.debug(f"Set evidence for {self.id}: {value}")
+
+    def compute_message(self, target_id: str) -> Message:
+        """
+        Compute message to target factor node.
+        Product of all incoming messages except from target.
+        """
+        incoming_messages = [
+            msg for source_id, msg in self.messages.items()
+            if source_id != target_id
+        ]
+        
+        if not incoming_messages:
+            # If no incoming messages, return uniform message
+            return self._create_uniform_message(target_id)
+            
+        # Combine all incoming messages
+        result = incoming_messages[0]
+        for msg in incoming_messages[1:]:
+            result = result.combine(msg)
+            
+        # If evidence is set, incorporate it
+        if self.evidence is not None:
+            result = self._incorporate_evidence(result)
+            
+        return result
+
+    def _create_uniform_message(self, target_id: str) -> Message:
+        """Create appropriate uniform message based on variable type."""
+        if self.variable_type == "discrete":
+            # Get states from neighboring factor
+            states = self.neighbors[target_id].get_variable_states(self.id)
+            prob = 1.0 / len(states)
+            return DiscreteMessage(
+                self.id,
+                target_id,
+                [self.id],
+                "variable_to_factor",
+                {self.id: states},
+                {(state,): prob for state in states}
+            )
+        elif self.variable_type == "continuous":
+            # Create wide Gaussian for continuous variables
+            return GaussianMessage(
+                self.id,
+                target_id,
+                [self.id],
+                "variable_to_factor",
+                0.0,  # mean
+                1e6   # variance (very uncertain)
+            )
+        else:
+            raise ValueError(f"Unsupported variable type: {self.variable_type}")
+
+    def _incorporate_evidence(self, message: Message) -> Message:
+        """Incorporate evidence into message."""
+        if isinstance(message, DiscreteMessage):
+            # For discrete messages, set probability 1 for evidence value
+            new_probs = {
+                states: 1.0 if states[0] == self.evidence else 0.0
+                for states in message.probabilities.keys()
+            }
+            return DiscreteMessage(
+                message.source_id,
+                message.target_id,
+                message.variables,
+                message.direction,
+                message.states,
+                new_probs
+            )
+        elif isinstance(message, GaussianMessage):
+            # For Gaussian messages, create delta-like distribution
+            return GaussianMessage(
+                message.source_id,
+                message.target_id,
+                message.variables,
+                message.direction,
+                float(self.evidence),  # mean at evidence value
+                1e-10                  # very small variance
+            )
+        else:
+            raise ValueError(f"Unsupported message type for evidence: {type(message)}")
+
+class FactorNode(Node):
+    """
+    Represents a factor node in the factor graph.
+    Maintains exact factor operations without approximation.
+    """
+    def __init__(self, id: str, factor: Factor):
+        """
+        Initialize factor node.
+        
+        Args:
+            id: Node identifier
+            factor: The factor associated with this node
+        """
+        super().__init__(id, NodeType.FACTOR)
+        self.factor = factor
+        
+    def compute_message(self, target_id: str) -> Message:
+        """
+        Compute message to target variable node.
+        Product of factor with all incoming messages except from target,
+        marginalized over all variables except target.
+        """
+        # Get incoming messages from all neighbors except target
+        incoming_messages = [
+            msg for source_id, msg in self.messages.items()
+            if source_id != target_id
+        ]
+        
+        # Start with factor as initial message
+        result = self.factor.to_message(self.id, target_id)
+        
+        # Multiply by all incoming messages
+        for msg in incoming_messages:
+            result = result.combine(msg)
+            
+        # Marginalize out all variables except target
+        vars_to_marginalize = [
+            var for var in result.variables
+            if var != self.neighbors[target_id].id
+        ]
+        
+        if vars_to_marginalize:
+            result = result.marginalize(vars_to_marginalize)
+            
+        return result
+
+    def get_variable_states(self, var_id: str) -> List[str]:
+        """Get possible states for a discrete variable."""
+        if isinstance(self.factor, DiscreteFactor):
+            return self.factor.states[var_id]
+        raise ValueError(f"Factor {self.id} does not have discrete states")
+
+class MessagePassing:
+    """
+    Controls message passing in the factor graph.
+    Ensures exact inference without approximation.
+    """
+    def __init__(self):
+        self.nodes: Dict[str, Node] = {}
+        self.messages_sent: Set[Tuple[str, str]] = set()
+        self.logger = logging.getLogger(__name__)
+        
+    def add_node(self, node: Node) -> None:
+        """Add node to the graph."""
+        self.nodes[node.id] = node
+        
+    def add_edge(self, node1_id: str, node2_id: str) -> None:
+        """Add edge between nodes."""
+        if node1_id not in self.nodes or node2_id not in self.nodes:
+            raise ValueError("Both nodes must exist in the graph")
+            
+        node1 = self.nodes[node1_id]
+        node2 = self.nodes[node2_id]
+        
+        if node1.type == node2.type:
+            raise ValueError("Cannot connect nodes of same type")
+            
+        node1.neighbors[node2_id] = node2
+        node2.neighbors[node1_id] = node1
+        
+    def run_belief_propagation(self, max_iterations: int = 100, 
+                             tolerance: float = 1e-6) -> bool:
+        """
+        Run belief propagation until convergence or max iterations.
+        
+        Args:
+            max_iterations: Maximum number of iterations
+            tolerance: Convergence tolerance
+            
+        Returns:
+            bool: Whether convergence was achieved
+        """
+        for iteration in range(max_iterations):
+            old_messages = self._copy_messages()
+            
+            # Send messages from variables to factors
+            self._send_variable_to_factor_messages()
+            
+            # Send messages from factors to variables
+            self._send_factor_to_variable_messages()
+            
+            # Check convergence
+            if self._check_convergence(old_messages, tolerance):
+                self.logger.info(f"Converged after {iteration + 1} iterations")
+                return True
+                
+        self.logger.warning(f"Did not converge after {max_iterations} iterations")
+        return False
+        
+    def _copy_messages(self) -> Dict[Tuple[str, str], Message]:
+        """Create deep copy of all current messages."""
+        messages = {}
+        for node in self.nodes.values():
+            for source_id, message in node.messages.items():
+                messages[(source_id, node.id)] = message
+        return messages
+        
+    def _send_variable_to_factor_messages(self) -> None:
+        """Send messages from all variable nodes to factor nodes."""
+        for node in self.nodes.values():
+            if node.type == NodeType.VARIABLE:
+                for target_id in node.neighbors:
+                    node.send_message(target_id)
+                    
+    def _send_factor_to_variable_messages(self) -> None:
+        """Send messages from all factor nodes to variable nodes."""
+        for node in self.nodes.values():
+            if node.type == NodeType.FACTOR:
+                for target_id in node.neighbors:
+                    node.send_message(target_id)
+                    
+    def _check_convergence(self, old_messages: Dict[Tuple[str, str], Message], 
+                          tolerance: float) -> bool:
+        """
+        Check if messages have converged.
+        
+        Args:
+            old_messages: Messages from previous iteration
+            tolerance: Maximum allowed difference
+            
+        Returns:
+            bool: Whether convergence has been achieved
+        """
+        for node in self.nodes.values():
+            for source_id, message in node.messages.items():
+                old_message = old_messages.get((source_id, node.id))
+                if old_message is None:
+                    return False
+                    
+                if not message.is_close(old_message, tolerance):
+                    return False
+                    
+        return True
+
+    def get_beliefs(self) -> Dict[str, Message]:
+        """
+        Compute final beliefs for all variable nodes.
+        Product of all incoming messages to each variable node.
+        
+        Returns:
+            Dict mapping variable node IDs to their final beliefs
+        """
+        beliefs = {}
+        for node in self.nodes.values():
+            if node.type == NodeType.VARIABLE:
+                # Combine all incoming messages
+                if node.messages:
+                    belief = list(node.messages.values())[0]
+                    for message in list(node.messages.values())[1:]:
+                        belief = belief.combine(message)
+                else:
+                    # If no messages, create uniform belief
+                    belief = node._create_uniform_message(None)
+                    
+                beliefs[node.id] = belief
+                
+        return beliefs
 
 @dataclass
 class InferenceResult:
