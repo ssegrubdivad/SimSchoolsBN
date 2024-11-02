@@ -142,17 +142,17 @@ CPT StudentPerformance
 ## Project Structure
 ```
 simschools_bn/
-├── app.py              # Main Flask application
+├── app.py                        # Main Flask application
 ├── src/
-│   ├── inference_engine/     # Core inference components
-│   ├── input_parsing/       # File parsing modules
-│   ├── network_structure/   # Network components
+│   ├── inference_engine/         # Core inference components
+│   ├── input_parsing/            # File parsing modules
+│   ├── network_structure/        # Network components
 │   ├── probability_distribution/ # Distribution implementations
-│   └── visualization/      # Visualization components
-├── templates/          # Frontend templates
-├── static/            # Static files
-├── tests/             # Test suites
-└── docs/              # Documentation
+│   └── visualization/            # Visualization components
+├── templates/                    # Frontend templates
+├── static/                       # Static files
+├── tests/                        # Test suites
+└── docs/                         # Documentation
 ```
 
 ## Mathematical Guarantees
