@@ -100,43 +100,172 @@ Access the application at `http://localhost:8000`
 
 ### File Formats
 
-#### Network Structure (.bns)
+#### Example Network Structure (.bns)
 ```
-# Bayesian Network Structure File
-META network_name ExampleNetwork
-META author Author Name
+# Bayesian Network Structure File (.bns)
+# Version: 1.1
+# Description: Educational Finance Impact Network
 
-NODE StudentPerformance continuous
-  DESCRIPTION Student academic performance
-  RANGE 0,100
+META network_name EducationalFinanceNetwork
+META author SimSchools_BN
+META date_created 2024-10-23
+
+# Continuous Variables
+NODE AnnualBudget continuous
+  DESCRIPTION Annual school budget in millions of dollars
+  RANGE 1.0,10.0
+
+NODE TeacherSalary continuous
+  DESCRIPTION Average teacher salary in thousands of dollars
+  RANGE 30.0,80.0
+
+NODE StudentTeacherRatio continuous
+  DESCRIPTION Number of students per teacher
+  RANGE 10.0,30.0
+
+# Discrete Variables
+NODE ResourceAllocation discrete
+  DESCRIPTION How the budget is primarily allocated
+  STATES instruction,facilities,technology
 
 NODE TeacherQuality discrete
-  DESCRIPTION Teacher quality rating
+  DESCRIPTION Overall teacher quality rating
   STATES low,medium,high
 
+NODE StudentPerformance discrete
+  DESCRIPTION Overall student academic performance
+  STATES poor,average,good,excellent
+
+# Edge Definitions
+EDGE AnnualBudget ResourceAllocation
+EDGE AnnualBudget TeacherSalary
+EDGE AnnualBudget StudentTeacherRatio
+EDGE TeacherSalary TeacherQuality
+EDGE StudentTeacherRatio TeacherQuality
+EDGE ResourceAllocation StudentPerformance
 EDGE TeacherQuality StudentPerformance
+
+# End of file marker
+END_NETWORK
 ```
 
-#### Conditional Probability Tables (.cpt)
+#### Example Conditional Probability Tables (.cpt)
 ```
-# CPT File
-META network_name ExampleNetwork
+# Conditional Probability Table File (.cpt)
+# Version: 1.1
+# Description: CPT for Educational Finance Network
 
+# This network models:
+
+# Continuous Variables:
+# - AnnualBudget: School's annual budget (in millions)
+# - TeacherSalary: Average teacher salary (in thousands)
+# - StudentTeacherRatio: Students per teacher
+
+# Discrete Variables:
+# - ResourceAllocation: How budget is allocated (instruction/facilities/technology)
+# - TeacherQuality: Quality rating (low/medium/high)
+# - StudentPerformance: Academic performance (poor/average/good/excellent)
+
+# The relationships modeled include:
+# - Budget affects resource allocation, teacher salaries, and student-teacher ratio
+# - Teacher salaries and student-teacher ratio influence teacher quality
+# - Resource allocation and teacher quality influence student performance
+
+# The network includes examples of:
+# - Pure continuous distributions (AnnualBudget)
+# - Continuous Linear Gaussian (CLG) distributions (TeacherSalary, StudentTeacherRatio)
+# - Discrete CPTs with continuous parents (ResourceAllocation, TeacherQuality)
+# - Discrete CPTs with discrete parents (StudentPerformance)
+
+META network_name EducationalFinanceNetwork
+META author SimSchools_BN
+META date_created 2024-10-23
+
+# Annual Budget (root node, continuous)
+CPT AnnualBudget
+  TYPE CONTINUOUS
+  PARENTS
+  DISTRIBUTION
+    type = truncated_gaussian
+    mean = 5.5
+    variance = 2.25
+    lower = 1.0
+    upper = 10.0
+
+# Resource Allocation (discrete with continuous parent)
+CPT ResourceAllocation
+  TYPE DISCRETE
+  PARENTS AnnualBudget
+  STATES instruction,facilities,technology
+  TABLE
+    # Lower budget (1-4 million) favors instruction
+    (1.0,4.0) | 0.60, 0.30, 0.10
+    # Medium budget (4-7 million) more balanced
+    (4.0,7.0) | 0.45, 0.35, 0.20
+    # Higher budget (7-10 million) enables more technology
+    (7.0,10.0) | 0.40, 0.35, 0.25
+  END_TABLE
+
+# Teacher Salary (continuous with continuous parent)
+CPT TeacherSalary
+  TYPE CLG
+  PARENTS AnnualBudget
+  DISTRIBUTION
+    continuous_parents = AnnualBudget
+    mean_base = 35.0
+    coefficients = [5.0]
+    variance = 16.0
+
+# Student-Teacher Ratio (continuous with continuous parent)
+CPT StudentTeacherRatio
+  TYPE CLG
+  PARENTS AnnualBudget
+  DISTRIBUTION
+    continuous_parents = AnnualBudget
+    mean_base = 28.0
+    coefficients = [-1.5]
+    variance = 4.0
+
+# Teacher Quality (discrete with continuous parents)
 CPT TeacherQuality
   TYPE DISCRETE
+  PARENTS TeacherSalary StudentTeacherRatio
   STATES low,medium,high
   TABLE
-    0.2,0.5,0.3
+    # Format: TeacherSalary range, StudentTeacherRatio range | probabilities
+    # Low salary (30-45K)
+    (30.0,45.0),(10.0,15.0) | 0.50, 0.40, 0.10
+    (30.0,45.0),(15.0,20.0) | 0.60, 0.35, 0.05
+    (30.0,45.0),(20.0,30.0) | 0.70, 0.25, 0.05
+    # Medium salary (45-60K)
+    (45.0,60.0),(10.0,15.0) | 0.30, 0.50, 0.20
+    (45.0,60.0),(15.0,20.0) | 0.35, 0.45, 0.20
+    (45.0,60.0),(20.0,30.0) | 0.45, 0.40, 0.15
+    # High salary (60-80K)
+    (60.0,80.0),(10.0,15.0) | 0.15, 0.45, 0.40
+    (60.0,80.0),(15.0,20.0) | 0.20, 0.45, 0.35
+    (60.0,80.0),(20.0,30.0) | 0.25, 0.50, 0.25
+  END_TABLE
 
+# Student Performance (discrete with discrete parents)
 CPT StudentPerformance
-  TYPE CLG
-  PARENTS TeacherQuality
-  DISTRIBUTION
-    type = clg
-    continuous_parents = []
-    mean_base = 70.0
-    coefficients = []
-    variance = 100.0
+  TYPE DISCRETE
+  PARENTS ResourceAllocation TeacherQuality
+  STATES poor,average,good,excellent
+  TABLE
+    instruction,low | 0.30, 0.40, 0.20, 0.10
+    instruction,medium | 0.20, 0.35, 0.30, 0.15
+    instruction,high | 0.10, 0.25, 0.40, 0.25
+    facilities,low | 0.35, 0.40, 0.15, 0.10
+    facilities,medium | 0.25, 0.40, 0.25, 0.10
+    facilities,high | 0.15, 0.35, 0.35, 0.15
+    technology,low | 0.25, 0.45, 0.20, 0.10
+    technology,medium | 0.15, 0.40, 0.30, 0.15
+    technology,high | 0.05, 0.30, 0.40, 0.25
+  END_TABLE
+  
+END_CPT_FILE
 ```
 
 ## Project Structure
