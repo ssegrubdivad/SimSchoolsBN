@@ -1,4 +1,5 @@
-# SimSchools BN (Bayesian Network for Educational Simulations)
+# SimSchools BN 
+### Bayesian Network for Educational Simulations
 
 SimSchools BN is a comprehensive tool for creating, analyzing, and querying Bayesian Networks with a specific focus on simulating schools, colleges, universities and education systems. While the core application can work with various types of Bayesian Networks, it is tailored for educational simulations.
 
