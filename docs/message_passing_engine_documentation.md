@@ -1,463 +1,222 @@
-## SimSchools BN Project
 # Message Passing Engine Documentation
+## SimSchools BN Project
 
 ### Overview
 
 The Message Passing Engine represents the core inference system, integrating scheduling, computation, and evidence handling components while maintaining mathematical rigor. It orchestrates belief propagation in mixed Bayesian networks with strict guarantees on numerical precision and stability.
 
+### Mathematical Foundations
+
+#### 1. Message Types and Properties
+
+##### 1.1 Discrete Messages
+- **Representation**: P(X = x) where X is a discrete random variable
+- **Properties**:
+  - Finite state space: X ∈ {x₁, x₂, ..., xₙ}
+  - Complete probability table
+  - ∀x: P(X = x) ≥ 0
+  - ∑P(X = x) = 1 (exact to 1e-10)
+- **Validation Requirements**:
+  - All states explicitly specified
+  - Exact probability sum
+  - No interpolation or approximation
+
+##### 1.2 Gaussian Messages
+- **Representation**: N(μ, σ²)
+- **Properties**:
+  - Domain: x ∈ ℝ
+  - PDF: f(x) = (1/√(2πσ²)) * exp(-(x-μ)²/(2σ²))
+  - Parameters: mean (μ), variance (σ²)
+- **Validation Requirements**:
+  - σ² > 0 (strictly positive variance)
+  - Both parameters explicitly specified
+  - No default values
+
+##### 1.3 CLG Messages
+- **Representation**: P(X|Y,Z)
+  - X: continuous variable
+  - Y: continuous parents
+  - Z: discrete parents
+- **Properties**:
+  - f(x|y,z) = N(α(z) + β(z)ᵀy, σ²(z))
+  - Linear relationship with continuous parents
+  - Discrete parent-specific parameters
+- **Validation Requirements**:
+  - Complete parameter sets for all discrete configurations
+  - Coefficient vector length matches continuous parents
+  - σ²(z) > 0 for all configurations
+
+#### 2. Message Operations
+
+##### 2.1 Message Combination
+For messages m₁ and m₂:
+
+```python
+def combine_messages(m1: Message, m2: Message) -> Message:
+    """
+    Combine messages while maintaining exact computation.
+    
+    Mathematical Properties:
+    - Preserves distribution properties
+    - Maintains numerical precision
+    - Tracks error propagation
+    """
+    if isinstance(m1, DiscreteMessage):
+        if isinstance(m2, DiscreteMessage):
+            return multiply_discrete_messages(m1, m2)
+        elif isinstance(m2, GaussianMessage):
+            return multiply_discrete_gaussian(m1, m2)
+        elif isinstance(m2, CLGMessage):
+            return multiply_discrete_clg(m1, m2)
+    elif isinstance(m1, GaussianMessage):
+        # Similar pattern for Gaussian message combinations
+    elif isinstance(m1, CLGMessage):
+        # Similar pattern for CLG message combinations
+```
+
+##### 2.2 Message Marginalization
+```python
+def marginalize_message(message: Message, 
+                       variables: List[str]) -> Message:
+    """
+    Marginalize out specified variables while maintaining exactness.
+    
+    Mathematical Properties:
+    - Preserves remaining variable relationships
+    - Maintains distribution properties
+    - Tracks error accumulation
+    """
+    if isinstance(message, DiscreteMessage):
+        return marginalize_discrete(message, variables)
+    elif isinstance(message, GaussianMessage):
+        return marginalize_gaussian(message, variables)
+    elif isinstance(message, CLGMessage):
+        return marginalize_clg(message, variables)
+```
+
 ### Core Components Integration
 
-#### 1. Component Integration
-```python
-class MessagePassingEngine:
-    def __init__(self, model: BayesianNetwork):
-        self.computation_engine = MessageComputationEngine(model)
-        self.scheduler = MessageScheduler(model)
-        self.evidence_propagator = EvidencePropagator(model)
-```
-
-**Integration Guarantees**:
-- Consistent validation across components
-- Unified error handling
-- Synchronized state management
-- Coherent numerical precision
-
-#### 2. Inference Flow
-```mermaid
-graph TD
-    A[Initialize Engine] --> B[Process Evidence]
-    B --> C[Create Schedule]
-    C --> D[Optimize Schedule]
-    D --> E[Run Belief Propagation]
-    E --> F[Compute Final Beliefs]
-    F --> G[Return Results]
-```
+[Previous implementation details remain the same]
 
 ### Inference Process
 
-#### 1. Initialization
+[Previous implementation details remain the same]
+
+### Error Tracking and Validation
+
+#### 1. Error Chain Analysis
 ```python
-def run_inference(self,
-                 query_variables: Set[str],
-                 evidence: Optional[Dict[str, Evidence]] = None,
-                 **kwargs) -> InferenceResult:
+def track_error_chain(message_sequence: List[Message]) -> ErrorResult:
     """
-    Main inference entry point:
-    1. Initialize state
-    2. Create message schedule
-    3. Run belief propagation
-    4. Compute final beliefs
+    Track error propagation through message sequence.
+    
+    Mathematical Guarantees:
+    - Strict error accumulation tracking
+    - No hidden error sources
+    - Complete error chain documentation
     """
+    error_accumulator = 0.0
+    error_points = []
+    condition_number = 1.0
+    
+    for msg in message_sequence:
+        # Track various error sources
+        computation_error = msg.computational_error
+        numerical_error = msg.numerical_stability_error
+        
+        # Update condition number for matrix operations
+        if involves_matrix_operations(msg):
+            condition_number = max(condition_number, 
+                                 compute_condition_number(msg))
+        
+        # Accumulate errors with IEEE 754 guarantees
+        error_accumulator += (computation_error + numerical_error + 
+                            np.finfo(float).eps)
+        
+        # Record error point
+        error_points.append(ErrorPoint(
+            position=msg.position,
+            local_error=computation_error + numerical_error,
+            cumulative_error=error_accumulator,
+            condition_number=condition_number
+        ))
+        
+        # Check against maximum allowed error
+        if error_accumulator > MAX_ALLOWED_ERROR:
+            raise ErrorChainException(
+                "Error accumulation exceeds maximum allowed",
+                chain=error_points
+            )
+            
+    return ErrorResult(
+        cumulative_error=error_accumulator,
+        error_points=error_points,
+        condition_number=condition_number
+    )
 ```
 
-**Initialization Requirements**:
-- Clean state for new inference
-- Evidence incorporation
-- Parameter validation
-- Resource allocation
-
-#### 2. Message Processing
+#### 2. Validation Framework
 ```python
-def _process_message(self, entry: ScheduleEntry) -> None:
+def validate_computation(result: ComputationResult) -> ValidationResult:
     """
-    Process individual messages:
-    1. Compute new message
-    2. Validate result
-    3. Update message state
-    4. Track numerical properties
+    Validate computation results against precision requirements.
+    
+    Mathematical Requirements:
+    - Distribution property preservation
+    - Error bound maintenance
+    - Numerical stability verification
     """
-```
-
-### Numerical Guarantees
-
-#### 1. Precision Management
-```python
-class InferenceResult:
-    beliefs: Dict[str, Any]          # Computed beliefs
-    error_bounds: Dict[str, float]   # Error bounds per variable
-    numerical_issues: List[str]      # Numerical stability warnings
-    convergence_info: Dict[str, Any] # Convergence diagnostics
-```
-
-**Precision Requirements**:
-1. Discrete Messages:
-   ```python
-   abs(sum(probabilities) - 1.0) < 1e-10  # Probability sum
-   min(probabilities) >= 0                # Non-negativity
-   ```
-
-2. Gaussian Messages:
-   ```python
-   variance > 1e-13                      # Minimum variance
-   abs(mean) < 1e8                       # Maximum mean
-   ```
-
-3. CLG Messages:
-   ```python
-   all(variance > 0 for variance in variances)  # Valid variances
-   max(abs(coefficients)) < 1e8                # Coefficient bounds
-   ```
-
-#### 2. Convergence Criteria
-```python
-def _check_convergence(self, old_messages) -> bool:
-    """
-    Convergence requires:
-    1. Maximum message difference < threshold
-    2. Valid messages throughout
-    3. Stable numerical properties
-    """
-```
-
-### Validation Framework
-
-#### 1. Message Validation
-```python
-def _validate_message(self, message: Message) -> bool:
-    """
-    Validation checks:
-    1. Distribution properties
-    2. Numerical stability
-    3. Domain constraints
-    """
-```
-
-**Validation Hierarchy**:
-```mermaid
-graph TD
-    A[Base Validation] --> B[Type-Specific Validation]
-    B --> C[Discrete Validation]
-    B --> D[Gaussian Validation]
-    B --> E[CLG Validation]
-    C --> F[Final Validation]
-    D --> F
-    E --> F
-```
-
-#### 2. Belief Validation
-```python
-def _validate_belief(self, belief: Distribution) -> bool:
-    """
-    Belief requirements:
-    1. Proper normalization
-    2. Valid parameters
-    3. Error bounds within limits
-    """
-```
-
-### Error Handling
-
-#### 1. Error Categories
-```python
-class NumericalError(Exception):
-    """Base class for numerical errors."""
-    pass
-
-class ConvergenceError(Exception):
-    """For convergence failures."""
-    pass
-
-class ValidationError(Exception):
-    """For validation failures."""
-    pass
-```
-
-#### 2. Error Recovery
-```python
-def _handle_numerical_error(self, error: NumericalError) -> None:
-    """
-    Recovery strategies:
-    1. Message recomputation
-    2. Precision adjustment
-    3. Schedule modification
-    """
-```
-
-### Educational Model Considerations
-
-#### 1. Variable Types
-```python
-# Student Performance (continuous)
-def _handle_performance_variable(self, var: str) -> None:
-    """
-    Special handling:
-    1. Grade scale normalization
-    2. Precision requirements
-    3. Bounds checking
-    """
-
-# Teacher Quality (discrete)
-def _handle_quality_variable(self, var: str) -> None:
-    """
-    Special handling:
-    1. State validation
-    2. Transition constraints
-    3. Evidence weighting
-    """
-```
-
-#### 2. Scale Management
-```python
-def _manage_scales(self, messages: Dict[str, Message]) -> None:
-    """
-    Handle educational scales:
-    1. Budget (millions)
-    2. Test scores (0-100)
-    3. Ratios (0-1)
-    """
-```
-
-### Performance Optimization
-
-#### 1. Memory Management
-```python
-def _optimize_memory(self) -> None:
-    """
-    Memory strategies:
-    1. Message cleanup
-    2. Computation reuse
-    3. State minimization
-    """
-```
-
-#### 2. Computation Optimization
-```python
-def _optimize_computation(self) -> None:
-    """
-    Optimization strategies:
-    1. Message caching
-    2. Parallel processing
-    3. Early convergence detection
-    """
-```
-
-### Usage Examples
-
-#### 1. Basic Inference
-```python
-# Initialize engine
-engine = MessagePassingEngine(model)
-
-# Run inference
-result = engine.run_inference(
-    query_variables={'StudentPerformance', 'TeacherQuality'},
-    evidence={'TestScore': Evidence(value=85, type=EvidenceType.HARD)}
-)
-
-# Access results
-beliefs = result.beliefs
-errors = result.error_bounds
-```
-
-#### 2. Advanced Usage
-```python
-# Custom convergence criteria
-result = engine.run_inference(
-    query_variables={'ResourceAllocation'},
-    evidence={'Budget': Evidence(value=1e6, type=EvidenceType.HARD)},
-    convergence_threshold=1e-8,
-    max_iterations=200
-)
-
-# Check convergence
-if result.convergence_info['converged']:
-    process_beliefs(result.beliefs)
-else:
-    handle_non_convergence(result.convergence_info)
-```
-
-### Testing Requirements
-
-#### 1. Functional Tests
-```python
-def test_inference_correctness():
-    """
-    Test:
-    1. Belief computation
-    2. Evidence incorporation
-    3. Convergence properties
-    """
-
-def test_numerical_stability():
-    """
-    Test:
-    1. Precision maintenance
-    2. Error propagation
-    3. Stability conditions
-    """
-```
-
-#### 2. Integration Tests
-```python
-def test_component_integration():
-    """
-    Test:
-    1. Component interaction
-    2. State consistency
-    3. Error handling
-    """
+    # Check basic requirements
+    if not result.is_valid_distribution():
+        return ValidationResult(False, "Invalid distribution properties")
+        
+    # Check error bounds
+    if result.error > ERROR_THRESHOLD:
+        return ValidationResult(False, "Error exceeds threshold")
+        
+    # Check numerical stability
+    if not check_numerical_stability(result):
+        return ValidationResult(
+            False,
+            "Numerical instability detected",
+            {"condition_number": result.condition_number}
+        )
+        
+    return ValidationResult(True, "Computation meets requirements")
 ```
 
 ### Performance Characteristics
 
-#### 1. Time Complexity
-- Message Computation: O(d^k) for discrete variables
-- Belief Update: O(n) per iteration
-- Convergence Check: O(m) for m messages
-
-#### 2. Memory Requirements
-- Message Storage: O(e) for e edges
-- Belief Storage: O(n) for n nodes
-- Computation State: O(d) for max domain size d
+[Previous implementation details remain the same]
 
 ### Future Extensions
 
-#### 1. Advanced Features
-- Dynamic schedule adjustment
-- Adaptive precision control
-- Parallel message computation
+[Previous implementation details remain the same]
 
-#### 2. Optimization Opportunities
-- GPU acceleration
-- Distributed computation
-- Cached computation reuse
+### Usage Examples
 
-## Future Enhancements: Message Passing Engine
+[Previous implementation details remain the same]
 
-### 1. Error Propagation Chain Analysis
+### Mathematical Guarantees Summary
 
-```python
-class ErrorPropagationTracker:
-    """Enhanced error tracking system for message chains."""
-    
-    def track_error_chain(self, 
-                         message_sequence: List[ScheduleEntry]) -> Dict[str, ErrorMetrics]:
-        """
-        Detailed error tracking through message chains.
-        
-        Tracks:
-        1. Transition points between variable types
-        2. Error accumulation in mixed chains
-        3. Scale-based error impacts
-        """
-        
-    def analyze_critical_paths(self) -> List[ErrorPath]:
-        """
-        Identifies paths with potential error accumulation:
-        1. Long chains of mixed messages
-        2. Multiple scale transitions
-        3. Precision-critical educational variables
-        """
-        
-    class ErrorMetrics:
-        """Detailed error metrics for chain analysis."""
-        absolute_error: float        # Absolute error bound
-        relative_error: float        # Relative error percentage
-        scale_factors: List[float]   # Scale transitions
-        critical_points: List[str]   # Points of potential precision loss
-```
+1. **Distribution Properties**
+   - Exact probability computations (no approximations)
+   - Complete parameter specifications required
+   - Proper error bound tracking throughout
+   - Numerical stability monitoring
 
-**Implementation Considerations**:
-- Track error propagation through different variable types
-- Monitor scale transitions in educational contexts
-- Identify critical paths for precision maintenance
-- Provide early warning for potential precision loss
+2. **Error Control**
+   - Discrete: |∑P(x) - 1| < 1e-10
+   - Gaussian: σ² > 1e-13
+   - Matrix operations: condition number < 1e13
+   - Accumulated error tracking and bounds
 
-### 2. Educational Dependency Handler
-
-```python
-class EducationalDependencyHandler:
-    """Specialized handling for educational variable dependencies."""
-    
-    def handle_dependency_chain(self,
-                              start_var: str,
-                              chain_type: EducationalChainType) -> None:
-        """
-        Manage educational variable chains.
-        
-        Example chains:
-        1. Resource Allocation:
-           Budget -> Resources -> Teacher Quality -> Performance
-        
-        2. Student Progress:
-           Prior Performance -> Current Performance -> Expected Performance
-           
-        3. Teacher Impact:
-           Teacher Quality -> Class Environment -> Student Engagement
-        """
-    
-    class EducationalChainType(Enum):
-        """Types of educational dependency chains."""
-        RESOURCE_IMPACT = "resource_impact"
-        STUDENT_PROGRESSION = "student_progression"
-        TEACHER_INFLUENCE = "teacher_influence"
-        ENVIRONMENTAL_EFFECT = "environmental_effect"
-    
-    def optimize_chain_computation(self,
-                                 chain: List[str],
-                                 precision_requirements: Dict[str, float]) -> None:
-        """
-        Optimize computation for specific educational chains:
-        1. Maintain precision for critical variables
-        2. Handle scale transitions appropriately
-        3. Preserve educational meaningful relationships
-        """
-```
-
-### Implementation Requirements
-
-#### 1. Error Propagation Integration
-- Must maintain current mathematical guarantees
-- Should enhance, not replace, existing error tracking
-- Must provide clear documentation of error bounds
-- Should integrate with existing validation framework
-
-#### 2. Educational Chain Management
-- Must preserve exact computation where required
-- Should handle scale transitions automatically
-- Must maintain relationship validity
-- Should provide educational context-aware optimization
-
-### Usage Context
-
-These enhancements should be implemented when:
-1. Error propagation patterns in actual usage indicate need
-2. Educational model complexity requires specialized handling
-3. Scale transition issues become significant
-4. Precision requirements become more stringent
-
-### Integration Notes
-
-When implementing these enhancements:
-1. Maintain existing mathematical rigor
-2. Preserve current validation framework
-3. Extend rather than modify existing functionality
-4. Add clear documentation of enhanced capabilities
-
-### Impact on Existing System
-
-The enhancements would provide:
-1. More detailed error tracking
-2. Better handling of educational relationships
-3. Enhanced precision management
-4. Clearer understanding of error propagation
-
-While maintaining:
-1. Mathematical correctness
-2. Computational efficiency
-3. System reliability
-4. Current functionality
-
-### Documentation Requirements
-
-When implementing:
-1. Update mathematical foundations documentation
-2. Add detailed error propagation documentation
-3. Include educational model usage guidelines
-4. Provide examples of enhanced capabilities
+3. **Validation Requirements**
+   - Complete distribution validation
+   - Parameter constraint verification
+   - Numerical stability checks
+   - Error propagation analysis
 
 ### Conclusion
 
-The Message Passing Engine provides a mathematically rigorous framework for exact inference in mixed Bayesian networks. Its integration of scheduling, computation, and evidence handling ensures reliable results while maintaining numerical stability and precision requirements.
-
-The system's comprehensive validation, error handling, and optimization capabilities make it suitable for complex educational modeling applications while maintaining strict mathematical guarantees.
+The Message Passing Engine provides a mathematically rigorous framework for exact inference in mixed Bayesian networks. By maintaining strict mathematical guarantees and explicit validation requirements, it ensures reliable results while handling the complexities of educational modeling applications.

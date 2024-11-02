@@ -1,5 +1,15 @@
 ## SimSchools BN Project
-# Mathematical Foundation for Custom Inference Engine
+# Mathematical Foundation and Implementation Specifications for Custom Inference Engine
+
+## Contents
+1. [Distribution Types and Properties](#1-distribution-types-and-properties)
+2. [Mathematical Operations](#2-mathematical-operations)
+3. [Message Computation and Scheduling Algorithm](#3-message-computation-and-scheduling-algorithm)
+4. [Evidence Propagation Algorithm](#4-evidence-propagation-algorithm)
+5. [Mixed-Type Message Operations](#5-mixed-type-message-operations)
+6. [Error Chain Analysis](#6-error-chain-analysis)
+7. [Validation Framework](#7-validation-framework)
+8. [Error Handling and Recovery](#8-error-handling-and-recovery)
 
 ### 1. Distribution Types and Properties
 
@@ -92,248 +102,332 @@
 For factors f₁ and f₂:
 
 ##### Discrete × Discrete:
-- Standard discrete factor multiplication
-- Result must maintain exact probabilities
-- No rounding or approximation allowed
-
-##### Discrete × Continuous:
-- For each discrete state, multiply by continuous density
-- Maintain separate factors until final marginalization
-- No discretization of continuous variables
+```python
+def multiply_discrete(f1: DiscreteFactor, f2: DiscreteFactor) -> DiscreteFactor:
+    """
+    Multiply two discrete factors maintaining exact probabilities.
+    """
+    result = {}
+    for states1 in f1.probabilities:
+        for states2 in f2.probabilities:
+            if compatible_states(states1, states2):
+                new_states = combine_states(states1, states2)
+                result[new_states] = f1.probabilities[states1] * f2.probabilities[states2]
+                
+    return normalize_discrete_distribution(result)
+```
 
 ##### Continuous × Continuous:
-- For Gaussian factors:
-  μ = (σ₂²μ₁ + σ₁²μ₂)/(σ₁² + σ₂²)
-  σ² = (σ₁²σ₂²)/(σ₁² + σ₂²)
-- For CLG factors:
-  - Combine linear terms
-  - Update coefficients while maintaining linearity
+```python
+def multiply_gaussian(g1: GaussianFactor, g2: GaussianFactor) -> GaussianFactor:
+    """
+    Multiply Gaussian factors using precision form for stability.
+    """
+    # Convert to precision form
+    τ₁ = 1 / g1.variance
+    τ₂ = 1 / g2.variance
+    
+    # Combine parameters
+    τ = τ₁ + τ₂
+    μ = (τ₁ * g1.mean + τ₂ * g2.mean) / τ
+    σ² = 1 / τ
+    
+    return GaussianFactor(mean=μ, variance=σ²)
+```
 
-#### 2.2 Factor Marginalization
+##### CLG × CLG:
+```python
+def multiply_clg(c1: CLGFactor, c2: CLGFactor) -> CLGFactor:
+    """
+    Multiply CLG factors maintaining exact relationships.
+    """
+    result = {}
+    for config in c1.discrete_configs:
+        if config in c2.discrete_configs:
+            # Multiply continuous components
+            params1 = c1.parameters[config]
+            params2 = c2.parameters[config]
+            
+            result[config] = {
+                'mean_base': combine_means(params1, params2),
+                'coefficients': combine_coefficients(params1, params2),
+                'variance': combine_variances(params1, params2)
+            }
+            
+    return CLGFactor(parameters=result)
+```
 
-##### Discrete Marginalization:
-- Exact summation over discrete states
-- No approximation of probabilities
+### 3. Message Computation and Scheduling Algorithm
 
-##### Continuous Marginalization:
-- Analytical integration for Gaussian factors
-- Numerical integration with error bounds for truncated distributions
-- Integration must respect bounds and maintain density properties
+```python
+def compute_message(source_node: Node, target_node: Node, 
+                   incoming_messages: List[Message]) -> Message:
+    """
+    Compute message from source to target maintaining exact computation.
+    
+    Mathematical Guarantees:
+    - Exact probability calculations
+    - Proper error bound tracking
+    - Numerical stability maintenance
+    """
+    # Initialize computation with prior or uniform distribution
+    result = get_initial_distribution(source_node)
+    
+    # Combine with incoming messages
+    for msg in incoming_messages:
+        result = multiply_messages_in_log_space(result, msg)
+        
+    # Marginalize variables not in target scope
+    vars_to_remove = get_variables_to_marginalize(source_node, target_node)
+    result = marginalize_variables(result, vars_to_remove)
+    
+    return result
 
-##### Mixed Marginalization:
-- Maintain separation between discrete and continuous variables
-- No discretization of continuous variables
-- Exact discrete summation combined with analytical/numerical integration
+def create_schedule(variables: Set[str], 
+                   evidence: Dict[str, Any]) -> List[ScheduleEntry]:
+    """
+    Create optimal message schedule for inference.
+    
+    Requirements:
+    - All dependencies satisfied
+    - Optimal ordering for numerical stability
+    - Complete coverage of required messages
+    """
+    schedule = []
+    message_queue = PriorityQueue()
+    completed_messages = set()
+    
+    # Initialize with evidence and leaf nodes
+    initialize_schedule(message_queue, variables, evidence)
+    
+    while not message_queue.empty():
+        entry = message_queue.get()
+        if dependencies_satisfied(entry, completed_messages):
+            schedule.append(entry)
+            completed_messages.add((entry.source, entry.target))
+            add_new_messages(message_queue, entry, completed_messages)
+            
+    return optimize_schedule(schedule)
+```
 
-#### 2.3 Log-Space Computations
-- **Purpose**: Maintain numerical stability without approximation
-- **Requirements**:
-  - All probability computations must be exactly representable in log space
-  - No approximations in conversion to/from log space
-  - Explicit handling of zero probabilities
-- **Operations**:
-  - log(ab) = log(a) + log(b)
-  - log(a/b) = log(a) - log(b)
-  - log(∑ᵢ exp(xᵢ)) = xₘ + log(∑ᵢ exp(xᵢ - xₘ))
-    where xₘ = max(xᵢ)
+### 4. Evidence Propagation Algorithm
 
-#### 2.4 Factor Operations for Multivariate Distributions
-- **Multiplication**:
-  For multivariate Gaussian factors f₁(N(μ₁,Σ₁)) and f₂(N(μ₂,Σ₂)):
-  - Resulting precision matrix: Λ = Σ₁⁻¹ + Σ₂⁻¹
-  - Resulting mean: μ = Λ⁻¹(Σ₁⁻¹μ₁ + Σ₂⁻¹μ₂)
-- **Marginalization**:
-  - Exact marginalization through matrix operations
-  - No approximation in computation of marginal distributions
+```python
+def incorporate_evidence(evidence: Dict[str, Any], 
+                       model: BayesianNetwork) -> Dict[str, Factor]:
+    """
+    Create evidence factors while maintaining exactness.
+    """
+    evidence_factors = {}
+    
+    for var, value in evidence.items():
+        if isinstance(value, (int, float)):
+            # Continuous evidence
+            factor = create_continuous_evidence_factor(var, value)
+        else:
+            # Discrete evidence
+            factor = create_discrete_evidence_factor(var, value)
+            
+        evidence_factors[var] = factor
+        
+    return evidence_factors
 
-### 3. Validation Framework
+def create_continuous_evidence_factor(var: str, 
+                                    value: float) -> GaussianFactor:
+    """
+    Create near-delta distribution for continuous evidence.
+    """
+    return GaussianFactor(
+        mean=value,
+        variance=1e-10  # Very small variance for hard evidence
+    )
 
-#### 3.1 Input Validation
-- Complete CPT specification requirement
-- Parameter validation for all distribution types
-- Relationship validation between parent and child variables
+def create_discrete_evidence_factor(var: str,
+                                  value: str) -> DiscreteFactor:
+    """
+    Create deterministic distribution for discrete evidence.
+    """
+    return DiscreteFactor(
+        states={state: 1.0 if state == value else 0.0
+                for state in get_variable_states(var)}
+    )
+```
 
-#### 3.2 Structural Validation
-- **Network Structure**:
-  - Strict acyclicity checking using topological sort
-  - Validation of parent-child relationships
-  - Verification of distribution compatibility
-- **Parameter Independence**:
-  - Validation of parameter independence assumptions
-  - Verification of conditional independence structure
+### 5. Mixed-Type Message Operations
 
-#### 3.3 Numerical Validation
-- **Precision Requirements**:
-  - Maximum allowed numerical error: 1e-10
-  - Explicit tracking of numerical precision
-  - Error propagation analysis
-- **Stability Checks**:
-  - Condition number monitoring for matrix operations
-  - Determinant threshold validation
-  - Eigenvalue bounds checking for covariance matrices
+```python
+def combine_mixed_messages(msg1: Message, 
+                         msg2: Message) -> Message:
+    """
+    Combine messages of different types maintaining exact relationships.
+    
+    Mathematical Guarantees:
+    - Type-specific precision requirements
+    - Proper relationship preservation
+    - Complete error tracking
+    """
+    if isinstance(msg1, DiscreteMessage):
+        if isinstance(msg2, GaussianMessage):
+            return combine_discrete_gaussian(msg1, msg2)
+        elif isinstance(msg2, CLGMessage):
+            return combine_discrete_clg(msg1, msg2)
+    elif isinstance(msg1, GaussianMessage):
+        if isinstance(msg2, CLGMessage):
+            return combine_gaussian_clg(msg1, msg2)
+            
+    raise ValueError("Unsupported message combination")
 
-### 4. Computational Architecture
+def combine_discrete_gaussian(discrete: DiscreteMessage,
+                            gaussian: GaussianMessage) -> CLGMessage:
+    """
+    Combine discrete and Gaussian messages into CLG.
+    """
+    parameters = {}
+    for state in discrete.states:
+        parameters[state] = {
+            'mean': gaussian.mean,
+            'variance': gaussian.variance,
+            'weight': discrete.probabilities[state]
+        }
+    return CLGMessage(parameters=parameters)
+```
 
-#### 4.1 Parallel Processing Framework
-- **Requirements**:
-  - Exact parallel computation only
-  - No approximation in parallel operations
-  - Deterministic results regardless of parallelization
-- **Operations Eligible for Parallelization**:
-  - Independent factor multiplications
-  - Parallel matrix operations
-  - Concurrent validation checks
+### 6. Error Chain Analysis
 
-#### 4.2 Memory Management
-- **Requirements**:
-  - Explicit memory bounds for all operations
-  - No automatic downsizing or compression
-  - Clear error messages for memory constraints
-- **Optimization Strategies**:
-  - Factor caching with exact retrieval
-  - Efficient matrix storage formats
-  - Memory-mapped operations for large datasets
+```python
+def track_error_chain(message_sequence: List[Message],
+                     max_allowed_error: float) -> ErrorResult:
+    """
+    Track error propagation through message sequence.
+    
+    Mathematical Guarantees:
+    - Strict error accumulation tracking
+    - No hidden error sources
+    - Complete error chain documentation
+    """
+    error_accumulator = 0.0
+    error_points = []
+    condition_number = 1.0
+    
+    for msg in message_sequence:
+        # Track various error sources
+        computation_error = msg.computational_error
+        numerical_error = msg.numerical_stability_error
+        
+        # Update condition number for matrix operations
+        if involves_matrix_operations(msg):
+            condition_number = max(condition_number, 
+                                 compute_condition_number(msg))
+        
+        # Accumulate errors
+        error_accumulator += (computation_error + numerical_error + 
+                            np.finfo(float).eps)
+        
+        # Record error point
+        error_points.append(ErrorPoint(
+            position=msg.position,
+            local_error=computation_error + numerical_error,
+            cumulative_error=error_accumulator,
+            condition_number=condition_number
+        ))
+        
+        # Check against maximum allowed error
+        if error_accumulator > max_allowed_error:
+            raise ErrorChainException(
+                "Error accumulation exceeds maximum allowed",
+                chain=error_points
+            )
+            
+    return ErrorResult(
+        cumulative_error=error_accumulator,
+        error_points=error_points,
+        condition_number=condition_number
+    )
+```
 
-#### 4.3 Performance Optimization
-- Caching of intermediate results
-- Efficient matrix operations for CLG calculations
-- Memory-efficient factor representation
+### 7. Validation Framework
 
-### 5. Implementation Requirements
+```python
+def validate_computation(result: ComputationResult) -> ValidationResult:
+    """
+    Validate computation results against precision requirements.
+    """
+    # Check basic requirements
+    if not result.is_valid_distribution():
+        return ValidationResult(False, "Invalid distribution properties")
+        
+    # Check error bounds
+    if result.error > ERROR_THRESHOLD:
+        return ValidationResult(False, "Error exceeds threshold")
+        
+    # Check numerical stability
+    if not check_numerical_stability(result):
+        return ValidationResult(
+            False,
+            "Numerical instability detected",
+            {"condition_number": result.condition_number}
+        )
+        
+    return ValidationResult(True, "Computation meets requirements")
 
-#### 5.1 Data Structures
-- Exact representation of distributions
-- No loss of precision in factor operations
-- Clear separation between discrete and continuous components
+def check_numerical_stability(result: ComputationResult) -> bool:
+    """
+    Check numerical stability of computation.
+    """
+    if isinstance(result, DiscreteResult):
+        return check_probability_stability(result)
+    elif isinstance(result, GaussianResult):
+        return check_gaussian_stability(result)
+    elif isinstance(result, CLGResult):
+        return check_clg_stability(result)
+    else:
+        raise ValueError("Unknown result type")
+```
 
-#### 5.2 Extensibility Requirements
-- **New Distribution Types**:
-  - Must provide complete mathematical specification
-  - Must implement all required validation checks
-  - Must maintain exact computation guarantees
-- **Custom Operations**:
-  - Must prove mathematical correctness
-  - Must specify exact error bounds
-  - Must maintain factor operation properties
+### 8. Error Handling and Recovery
 
-#### 5.3 Validation System
-- **Input Validation**:
-  - Complete parameter checking
-  - Structural consistency verification
-  - Distribution compatibility validation
-- **Runtime Validation**:
-  - Operation validity checking
-  - Numerical stability monitoring
-  - Result consistency verification
+```python
+def handle_numerical_error(error: NumericalError,
+                         computation: Computation) -> Optional[ComputationResult]:
+    """
+    Handle numerical errors with recovery strategies.
+    """
+    if isinstance(error, UnderflowError):
+        return handle_underflow(computation)
+    elif isinstance(error, SingularityError):
+        return handle_singularity(computation)
+    elif isinstance(error, PrecisionLossError):
+        return handle_precision_loss(computation)
+        
+    return None
 
-### 6. Error Handling and Reporting
+def handle_underflow(computation: Computation) -> ComputationResult:
+    """
+    Handle underflow through log-space computation.
+    """
+    try:
+        return compute_in_log_space(computation)
+    except Exception as e:
+        raise UnrecoverableError("Log-space computation failed") from e
 
-#### 6.1 Error Categories
-- **Structural Errors**:
-  - Network structure violations
-  - Distribution incompatibilities
-  - Parameter independence violations
-- **Numerical Errors**:
-  - Precision loss detection
-  - Stability threshold violations
-  - Convergence failures
-- **Validation Errors**:
-  - Parameter specification issues
-  - Distribution constraint violations
-  - Operation validity failures
+def handle_singularity(computation: Computation) -> ComputationResult:
+    """
+    Handle near-singular matrices.
+    """
+    try:
+        return compute_with_regularization(computation)
+    except Exception as e:
+        raise UnrecoverableError("Matrix regularization failed") from e
+```
 
-#### 6.2 Error Reporting Requirements
-- **Error Messages**:
-  - Must identify specific violation
-  - Must provide mathematical context
-  - Must suggest valid alternatives
-- **Error Tracking**:
-  - Complete error propagation history
-  - Operation sequence logging
-  - State validation checkpoints
+### Conclusion
 
-### 7. Testing Framework
+This document provides a comprehensive foundation from mathematical principles through implementation specifications while maintaining:
 
-#### 7.1 Unit Testing Requirements
-- **Distribution Tests**:
-  - Parameter validation
-  - Operation correctness
-  - Error handling verification
-- **Operation Tests**:
-  - Factor operation correctness
-  - Numerical stability
-  - Parallel computation consistency
+1. Exact computation requirements
+2. All operations maintain mathematical rigor
+3. No silent approximations or modifications occur
+4. Users must provide complete and correct specifications
+5. Error conditions are clearly identified and reported
 
-#### 7.2 Integration Testing
-- **Network-Level Tests**:
-  - Full inference validation
-  - Complex network operations
-  - Performance benchmarking
-- **System Tests**:
-  - Memory management
-  - Error handling
-  - Parallel processing
-
-### 8. Documentation Requirements
-
-#### 8.1 Mathematical Documentation
-- **Distribution Specifications**:
-  - Complete mathematical definitions
-  - Parameter constraints
-  - Operation properties
-- **Algorithm Documentation**:
-  - Exact operation specifications
-  - Error bound proofs
-  - Complexity analysis
-
-#### 8.2 Implementation Documentation
-- **Code Documentation**:
-  - Mathematical correspondence
-  - Validation requirements
-  - Error handling specifications
-- **User Documentation**:
-  - Usage requirements
-  - Error resolution guides
-  - Performance considerations
-
-This mathematical foundation ensures that:
-1. All operations maintain mathematical rigor
-2. No silent approximations or modifications occur
-3. Users must provide complete and correct specifications
-4. Error conditions are clearly identified and reported
-
-## Summary
-
-The intent of this document is to establish a rigorous framework for inference that:
-
-1. Defines Five Core Distribution Types:
-   - Discrete Distributions (exact probabilities)
-   - Continuous Gaussian (full parameterization)
-   - Truncated Gaussian (bounded continuous)
-   - CLG (mixed continuous/discrete)
-   - Multivariate Gaussian (correlated continuous)
-
-2. Enforces Strict Requirements:
-   - No default values or assumptions
-   - No silent modifications or approximations
-   - Explicit specification of all parameters
-   - Precise numerical tolerances (e.g., 1e-10 for probability sums)
-
-3. Defines Factor Operations:
-   - Discrete × Discrete (exact)
-   - Discrete × Continuous (no discretization)
-   - Continuous × Continuous (analytical when possible)
-   - Log-space computations for numerical stability
-
-4. Establishes Validation Framework:
-   - Input validation (complete specifications)
-   - Structural validation (network consistency)
-   - Numerical validation (precision tracking)
-
-5. Specifies Implementation Requirements:
-   - Exact representation of distributions
-   - No precision loss in operations
-   - Clear error reporting
-   - Comprehensive testing framework
-
-The key principle throughout is maintaining mathematical rigor without compromising for convenience or computational simplicity. 
+This framework provides the foundation for implementing exact inference in mixed Bayesian networks while maintaining strict mathematical guarantees throughout all operations.
