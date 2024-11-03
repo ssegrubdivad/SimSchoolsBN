@@ -8,7 +8,7 @@ The Control Integration phase enhances the Bayesian Network inference system wit
 ### 1. Control-Aware Message Computation
 
 #### 1.1 Mathematical Foundation
-```math
+```python
 Let M(X) be a message about variable X with control level C.
 M'(X) = w(C) * M(X) + (1 - w(C)) * U(X)
 
@@ -29,7 +29,7 @@ where:
 #### 1.2 Distribution-Specific Guarantees
 
 ##### Discrete Distributions
-```math
+```python
 P'(X = x) = w(C) * P(X = x) + (1 - w(C))/n
 
 Properties:
@@ -39,7 +39,7 @@ Properties:
 ```
 
 ##### Gaussian Distributions
-```math
+```python
 μ' = μ
 σ'² = σ²/w(C)
 
@@ -50,7 +50,7 @@ Properties:
 ```
 
 ##### CLG Distributions
-```math
+```python
 For each discrete configuration z:
 μ'(z) = α(z)
 β'(z) = w(C) * β(z)
@@ -78,7 +78,7 @@ def validate_authority_path(path: List[ControlLevel]) -> bool:
 ```
 
 #### 2.2 Influence Weight Propagation
-```math
+```python
 For a path P = [C₁, C₂, ..., Cₙ]:
 W(P) = ∏ᵢ w(Cᵢ → Cᵢ₊₁)
 
