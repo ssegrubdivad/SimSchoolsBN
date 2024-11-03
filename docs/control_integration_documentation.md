@@ -1,5 +1,5 @@
 ## SimSchools BN Project
-# Phase 1A: Control Integration Documentation
+# Control Integration Documentation
 
 ### Overview
 
