@@ -103,6 +103,82 @@
             height: 100%;
         }
 
+/*        Additional network visualization elements*/
+        .visualization-controls {
+            margin-bottom: 1rem;
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+        }
+
+        .control-options {
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+        }
+
+        .control-legend {
+            margin: 1rem 0;
+            padding: 1rem;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            margin: 0.5rem 0;
+        }
+
+        .color-box {
+            width: 20px;
+            height: 20px;
+            margin-right: 0.5rem;
+            border-radius: 4px;
+        }
+
+        .links line {
+            stroke: #999;
+            stroke-opacity: 0.6;
+        }
+
+        .nodes circle {
+            stroke-width: 2px;
+            cursor: pointer;
+        }
+
+        .nodes circle.requires-coordination {
+            stroke-dasharray: 5,5;
+        }
+
+        .influence-path {
+            stroke-opacity: 0.3;
+            stroke-width: 5px;
+            pointer-events: none;
+        }
+
+        .authority-path {
+            stroke: #FF4081;
+            stroke-width: 3px;
+            stroke-dasharray: 5,5;
+        }
+
+        .node-label {
+            font-size: 12px;
+            pointer-events: none;
+        }
+
+        .tooltip {
+            position: absolute;
+            padding: 8px;
+            background: white;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            pointer-events: none;
+            font-size: 12px;
+            z-index: 1000;
+        }
+
 /*        For the query results*/
         #queryVisualization {
             margin-top: 20px;
@@ -174,7 +250,50 @@
 
             <div class="info">
                 <h2>Visualize Network</h2>
-                <button id="visualizeNetworkBtn" onclick="visualizeNetwork()">Visualize Network</button>
+                <div class="visualization-controls">
+                    <button id="visualizeNetworkBtn" onclick="visualizeNetwork()">Visualize Network</button>
+                    <div class="control-options">
+                        <label>
+                            <input type="checkbox" id="showControlLevels" checked>
+                            Show Control Levels
+                        </label>
+                        <label>
+                            <input type="checkbox" id="showInfluencePaths" checked>
+                            Show Influence Paths
+                        </label>
+                        <select id="highlightControlLevel">
+                            <option value="">Highlight Authority Path...</option>
+                            <option value="STUDENT">Student Level</option>
+                            <option value="TEACHER">Teacher Level</option>
+                            <option value="PARENT">Parent Level</option>
+                            <option value="SCHOOL_ADMIN">School Admin Level</option>
+                            <option value="DISTRICT_ADMIN">District Admin Level</option>
+                        </select>
+                    </div>
+                </div>
+                <div id="controlLegend" class="control-legend">
+                    <h3>Control Levels</h3>
+                    <div class="legend-item">
+                        <span class="color-box" style="background-color: #4CAF50;"></span>
+                        <span>Student</span>
+                    </div>
+                    <div class="legend-item">
+                        <span class="color-box" style="background-color: #2196F3;"></span>
+                        <span>Teacher</span>
+                    </div>
+                    <div class="legend-item">
+                        <span class="color-box" style="background-color: #FFC107;"></span>
+                        <span>Parent</span>
+                    </div>
+                    <div class="legend-item">
+                        <span class="color-box" style="background-color: #9C27B0;"></span>
+                        <span>School Admin</span>
+                    </div>
+                    <div class="legend-item">
+                        <span class="color-box" style="background-color: #F44336;"></span>
+                        <span>District Admin</span>
+                    </div>
+                </div>
                 <div id="networkVisualization"></div>
             </div>
 
@@ -374,14 +493,22 @@
                 });
                 
                 const visualizationDiv = document.getElementById('networkVisualization');
-                visualizationDiv.innerHTML = ''; // Clear previous content
-
+                visualizationDiv.innerHTML = '';
+                
+                // Create SVG
+                const width = visualizationDiv.clientWidth;
+                const height = visualizationDiv.clientHeight || 600;
                 
                 const svg = d3.select(visualizationDiv)
                     .append("svg")
-                    .attr("preserveAspectRatio", "xMidYMid meet")
-                    .attr("viewBox", `0 0 ${visualizationDiv.clientWidth} ${visualizationDiv.clientHeight}`);
+                    .attr("viewBox", `0 0 ${width} ${height}`)
+                    .attr("preserveAspectRatio", "xMidYMid meet");
 
+                // Create tooltip
+                const tooltip = d3.select(visualizationDiv)
+                    .append("div")
+                    .attr("class", "tooltip")
+                    .style("opacity", 0);
 
                 const graph = response.data;
 
@@ -394,59 +521,377 @@
 
                 const color = d3.scaleOrdinal(colorScheme1);
 
-                const simulation = d3.forceSimulation()
-                    .force("link", d3.forceLink().id(d => d.id).distance(100))
-                    .force("charge", d3.forceManyBody().strength(-300))
-                    .force("center", d3.forceCenter(visualizationDiv.clientWidth / 2, visualizationDiv.clientHeight / 2));
+                // State management
+                const state = {
+                    selectedNode: null,
+                    activeFilter: 'ALL',
+                    analysisMode: false,
+                    highlightedPath: null,
+                    relationshipMode: false,
+                    selectedLevel: null
+                };
 
-                // Create link lines
-                const link = svg.append("g")
-                    .attr("class", "links")
-                    .selectAll("line")
+                // Initialize force simulation
+                const simulation = d3.forceSimulation(graph.nodes)
+                    .force("link", d3.forceLink(graph.links).id(d => d.id).distance(100))
+                    .force("charge", d3.forceManyBody().strength(-300))
+                    .force("center", d3.forceCenter(width / 2, height / 2))
+                    .force("collision", d3.forceCollide().radius(30));
+
+                // Create arrow marker
+                svg.append("defs").selectAll("marker")
+                    .data(["standard", "influence", "authority"])
+                    .enter().append("marker")
+                    .attr("id", d => `arrow-${d}`)
+                    .attr("viewBox", "0 -5 10 10")
+                    .attr("refX", 20)
+                    .attr("refY", 0)
+                    .attr("markerWidth", 8)
+                    .attr("markerHeight", 8)
+                    .attr("orient", "auto")
+                    .append("path")
+                    .attr("d", "M0,-5L10,0L0,5")
+                    .attr("fill", d => d === "influence" ? "#2196F3" : 
+                                      d === "authority" ? "#FF4081" : "#999");
+
+                // Create containers for different layers
+                const layers = {
+                    influencePaths: svg.append("g").attr("class", "influence-paths"),
+                    links: svg.append("g").attr("class", "links"),
+                    nodes: svg.append("g").attr("class", "nodes"),
+                    labels: svg.append("g").attr("class", "labels"),
+                    highlights: svg.append("g").attr("class", "highlights"),
+                    overlay: svg.append("g").attr("class", "overlay")
+                };
+
+                // Create links
+                const link = layers.links.selectAll("line")
                     .data(graph.links)
                     .enter().append("line")
-                    .attr("stroke-width", 2)
-                    .attr("stroke", "#999");
+                    .attr("stroke-width", d => d.strokeWidth || 1)
+                    .attr("stroke-dasharray", d => d.strokeDasharray)
+                    .attr("marker-end", "url(#arrow-standard)")
+                    .style("stroke", "#999");
 
                 // Create nodes
-                const node = svg.append("g")
-                    .attr("class", "nodes")
-                    .selectAll("circle")
+                const node = layers.nodes.selectAll("circle")
                     .data(graph.nodes)
                     .enter().append("circle")
-                    .attr("r", 10)
-                    .attr("fill", d => color(d.id));
-
-                // Create arrow heads
-                const arrowHead = svg.append("g")
-                    .attr("class", "arrow-heads")
-                    .selectAll("path")
-                    .data(graph.links)
-                    .enter().append("path")
-                    .attr("d", "M0,-5L10,0L0,5")
-                    .attr("fill", "#999");
+                    .attr("r", 15)
+                    .attr("fill", d => color(d.id))
+                    .classed("requires-coordination", d => d.requiresCoordination)
+                    .call(d3.drag()
+                        .on("start", dragstarted)
+                        .on("drag", dragged)
+                        .on("end", dragended));
 
                 // Create labels
-                const label = svg.append("g")
-                    .attr("class", "labels")
-                    .selectAll("text")
+                const label = layers.labels.selectAll("text")
                     .data(graph.nodes)
                     .enter().append("text")
+                    .attr("class", "node-label")
                     .text(d => d.id)
-                    .attr('x', 12)
-                    .attr('y', 3);
+                    .attr("x", 20)
+                    .attr("y", 4);
 
-                node.append("title")
-                    .text(d => d.id);
+                // Visualization Manager
+                const visualizationManager = {
+                    // Filter Management
+                    filterByControlLevel(level) {
+                        state.activeFilter = level;
+                        
+                        d3.selectAll('.filter-btn')
+                            .classed('active', d => d3.select(d).attr('data-level') === level);
 
-                simulation
-                    .nodes(graph.nodes)
-                    .on("tick", ticked);
+                        const baseOpacity = level === 'ALL' ? 1 : 0.2;
+                        
+                        node.transition().duration(300)
+                            .style('opacity', d => level === 'ALL' || d.controlLevel === level ? 1 : baseOpacity);
 
-                simulation.force("link")
-                    .links(graph.links);
+                        link.transition().duration(300)
+                            .style('opacity', d => {
+                                if (level === 'ALL') return 0.6;
+                                return (d.source.controlLevel === level || 
+                                        d.target.controlLevel === level) ? 0.6 : 0.1;
+                            });
 
-                function ticked() {
+                        this.updateInfluencePaths(level);
+                    },
+
+                    // Influence Analysis
+                    showInfluenceAnalysis(nodeId) {
+                        if (!nodeId) return;
+                        
+                        const selectedNode = graph.nodes.find(n => n.id === nodeId);
+                        state.analysisMode = true;
+                        state.selectedNode = selectedNode;
+
+                        // Calculate metrics
+                        const metrics = this.calculateInfluenceMetrics(selectedNode);
+                        
+                        // Update display
+                        d3.select('#influenceMetrics')
+                            .style('display', 'block')
+                            .transition()
+                            .duration(300)
+                            .style('opacity', 1);
+
+                        d3.select('#directInfluence').text(metrics.direct.toFixed(2));
+                        d3.select('#indirectInfluence').text(metrics.indirect.toFixed(2));
+
+                        // Highlight influence paths
+                        this.highlightInfluencePaths(selectedNode);
+                    },
+
+                    calculateInfluenceMetrics(node) {
+                        const metrics = {
+                            direct: 0,
+                            indirect: 0
+                        };
+
+                        // Calculate direct influence
+                        const directConnections = graph.links.filter(
+                            l => l.source.id === node.id || l.target.id === node.id
+                        );
+                        
+                        metrics.direct = directConnections.reduce((sum, link) => {
+                            return sum + this.getInfluenceWeight(
+                                link.source.id === node.id ? link.source : link.target,
+                                link.source.id === node.id ? link.target : link.source
+                            );
+                        }, 0);
+
+                        // Calculate indirect influence
+                        const indirectPaths = this.findIndirectPaths(node);
+                        metrics.indirect = indirectPaths.reduce((sum, path) => {
+                            return sum + this.calculatePathStrength(path);
+                        }, 0);
+
+                        return metrics;
+                    },
+
+                    getInfluenceWeight(source, target) {
+                        if (!source.controlLevel || !target.controlLevel) return 0;
+                        
+                        const sourceLevelValue = ControlLevel[source.controlLevel];
+                        const targetLevelValue = ControlLevel[target.controlLevel];
+                        
+                        const baseWeight = source.influenceWeight || 1;
+                        const levelDifference = Math.abs(sourceLevelValue - targetLevelValue);
+                        
+                        return baseWeight * Math.pow(0.8, levelDifference);
+                    },
+
+                    // Path Building and Analysis
+                    buildAuthorityPath(startLevel, endLevel) {
+                        this.clearHighlights();
+                        
+                        const paths = this.findAuthorityPaths(startLevel, endLevel);
+                        if (!paths.length) {
+                            alert('No valid authority path found');
+                            return;
+                        }
+
+                        const optimalPath = this.selectOptimalPath(paths);
+                        this.highlightAuthorityPath(optimalPath);
+                        this.showPathMetrics(optimalPath);
+                    },
+
+                    findAuthorityPaths(startLevel, endLevel) {
+                        const paths = [];
+                        const visited = new Set();
+
+                        const dfs = (currentLevel, currentPath) => {
+                            if (currentLevel === endLevel) {
+                                paths.push([...currentPath]);
+                                return;
+                            }
+
+                            visited.add(currentLevel);
+                            const nextLevels = this.getValidNextLevels(currentLevel);
+                            
+                            for (const nextLevel of nextLevels) {
+                                if (!visited.has(nextLevel)) {
+                                    currentPath.push(nextLevel);
+                                    dfs(nextLevel, currentPath);
+                                    currentPath.pop();
+                                }
+                            }
+                            visited.delete(currentLevel);
+                        };
+
+                        dfs(startLevel, [startLevel]);
+                        return paths;
+                    },
+
+                    getValidNextLevels(currentLevel) {
+                        // Define valid transitions between levels
+                        const validTransitions = {
+                            'STUDENT': ['TEACHER'],
+                            'TEACHER': ['SCHOOL_ADMIN'],
+                            'PARENT': ['TEACHER', 'SCHOOL_ADMIN'],
+                            'SCHOOL_ADMIN': ['DISTRICT_ADMIN'],
+                            'DISTRICT_ADMIN': []
+                        };
+
+                        return validTransitions[currentLevel] || [];
+                    },
+
+                    selectOptimalPath(paths) {
+                        return paths.reduce((best, current) => {
+                            const currentStrength = this.calculatePathStrength(current);
+                            const bestStrength = this.calculatePathStrength(best);
+                            return currentStrength > bestStrength ? current : best;
+                        });
+                    },
+
+                    calculatePathStrength(path) {
+                        let strength = 1.0;
+                        for (let i = 0; i < path.length - 1; i++) {
+                            const sourceNode = this.findNodeByLevel(path[i]);
+                            const targetNode = this.findNodeByLevel(path[i + 1]);
+                            if (sourceNode && targetNode) {
+                                strength *= this.getInfluenceWeight(sourceNode, targetNode);
+                            }
+                        }
+                        return strength;
+                    },
+
+                    // Relationship Exploration
+                    exploreRelationships(nodeId) {
+                        const node = graph.nodes.find(n => n.id === nodeId);
+                        if (!node) return;
+
+                        this.clearRelationshipExploration();
+                        state.relationshipMode = true;
+
+                        const relationships = {
+                            upstream: this.findUpstreamRelationships(node),
+                            downstream: this.findDownstreamRelationships(node),
+                            coordination: this.findCoordinationRelationships(node)
+                        };
+
+                        this.visualizeRelationships(relationships);
+                    },
+
+                    findUpstreamRelationships(node) {
+                        return graph.links.filter(l => l.target.id === node.id)
+                            .map(l => ({
+                                source: l.source,
+                                target: l.target,
+                                type: 'upstream'
+                            }));
+                    },
+
+                    findDownstreamRelationships(node) {
+                        return graph.links.filter(l => l.source.id === node.id)
+                            .map(l => ({
+                                source: l.source,
+                                target: l.target,
+                                type: 'downstream'
+                            }));
+                    },
+
+                    findCoordinationRelationships(node) {
+                        if (!node.requiresCoordination) return [];
+                        
+                        return graph.nodes
+                            .filter(n => n.controlLevel && 
+                                       node.secondaryLevels?.includes(n.controlLevel))
+                            .map(n => ({
+                                source: node,
+                                target: n,
+                                type: 'coordination'
+                            }));
+                    },
+
+                    // Visualization Helpers
+                    clearHighlights() {
+                        layers.highlights.selectAll("*").remove();
+                        node.classed("selected-node", false);
+                        link.attr("marker-end", "url(#arrow-standard)")
+                            .style("stroke", "#999");
+                    },
+
+                    clearRelationshipExploration() {
+                        layers.overlay.selectAll("*").remove();
+                        state.relationshipMode = false;
+                    },
+
+                    updateInfluencePaths(level) {
+                        if (!graph.influencePaths) return;
+
+                        const relevantPaths = level === 'ALL' ? 
+                            graph.influencePaths :
+                            graph.influencePaths.filter(p => 
+                                p.source.controlLevel === level || 
+                                p.target.controlLevel === level
+                            );
+
+                        const paths = layers.influencePaths.selectAll("path")
+                            .data(relevantPaths, d => `${d.source.id}-${d.target.id}`);
+
+                        paths.exit().remove();
+
+                        paths.enter()
+                            .append("path")
+                            .merge(paths)
+                            .attr("class", "influence-path")
+                            .attr("stroke", d => d3.interpolateBlues(d.strength))
+                            .attr("d", d => this.calculatePath(d.source, d.target));
+                    },
+
+                    calculatePath(source, target) {
+                        const dx = target.x - source.x;
+                        const dy = target.y - source.y;
+                        const dr = Math.sqrt(dx * dx + dy * dy);
+                        return `M${source.x},${source.y}A${dr},${dr} 0 0,1 ${target.x},${target.y}`;
+                    }
+                };
+
+                // Event Handlers
+                node.on("click", function(event, d) {
+                    event.stopPropagation();
+                    state.selectedNode = state.selectedNode === d ? null : d;
+                    
+                    node.classed("selected-node", n => n === state.selectedNode);
+                    
+                    if (state.selectedNode) {
+                        visualizationManager.exploreRelationships(d.id);
+                        if (state.analysisMode) {
+                            visualizationManager.showInfluenceAnalysis(d.id);
+                        }
+                    } else {
+                        visualizationManager.clearHighlights();
+                        visualizationManager.clearRelationshipExploration();
+                    }
+                })
+                .on("mouseover", function(event, d) {
+                    tooltip.transition()
+                        .duration(200)
+                        .style("opacity", .9);
+                    
+                    const content = `
+                        <strong>${d.id}</strong><br/>
+                        Control Level: ${d.controlLevel || 'N/A'}<br/>
+                        ${d.influenceWeight ? `Influence: ${d.influenceWeight.toFixed(2)}<br/>` : ''}
+                        ${d.requiresCoordination ? 'Requires Coordination<br/>' : ''}
+                        ${d.secondaryLevels?.length ? 
+                            `Secondary Levels: ${d.secondaryLevels.join(', ')}` : ''}
+                    `;
+                    
+                    tooltip.html(content)
+                        .style("left", (event.pageX + 10) + "px")
+                        .style("top", (event.pageY - 10) + "px");
+                })
+                .on("mouseout", function() {
+                    tooltip.transition()
+                        .duration(500)
+                        .style("opacity", 0);
+                });
+
+                // Simulation tick handler
+                simulation.on("tick", () => {
                     link
                         .attr("x1", d => d.source.x)
                         .attr("y1", d => d.source.y)
@@ -457,60 +902,78 @@
                         .attr("cx", d => d.x)
                         .attr("cy", d => d.y);
 
-                    arrowHead
-                        .attr("transform", d => {
-                            const dx = d.target.x - d.source.x;
-                            const dy = d.target.y - d.source.y;
-                            const angle = Math.atan2(dy, dx) * 180 / Math.PI;
-                            const nodeRadius = 19.25;  // Should match the node radius * 2 if wanting to touch circumference of node only
-                            const distance = Math.sqrt(dx * dx + dy * dy);
-                            const x = d.source.x + (dx * (distance - nodeRadius)) / distance;
-                            const y = d.source.y + (dy * (distance - nodeRadius)) / distance;
-                            return `translate(${x},${y}) rotate(${angle})`;
-                        });
-
                     label
-                        .attr("x", d => d.x + 12)
-                        .attr("y", d => d.y + 3);
-                }
+                        .attr("x", d => d.x + 20)
+                        .attr("y", d => d.y + 4);
 
-                // Add drag capabilities
-                node.call(d3.drag()
-                    .on("start", dragstarted)
-                    .on("drag", dragged)
-                    .on("end", dragended));
+                    layers.influencePaths.selectAll("path")
+                        .attr("d", d => visualizationManager.calculatePath(d.source, d.target));
+                });
 
-                // Drag functions
-                function dragstarted(event, d) {
+                // Drag handlers
+                function dragstarted(event) {
                     if (!event.active) simulation.alphaTarget(0.3).restart();
-                    d.fx = d.x;
-                    d.fy = d.y;
+                    event.subject.fx = event.subject.x;
+                    event.subject.fy = event.subject.y;
                 }
 
-                function dragged(event, d) {
-                    d.fx = event.x;
-                    d.fy = event.y;
+                function dragged(event) {
+                    event.subject.fx = event.x;
+                    event.subject.fy = event.y;
                 }
 
-                function dragended(event, d) {
+                function dragended(event) {
                     if (!event.active) simulation.alphaTarget(0);
-                    d.fx = null;
-                    d.fy = null;
+                    event.subject.fx = null;
+                    event.subject.fy = null;
                 }
 
-                // Resize function
-                function resize() {
-                    svg.attr("viewBox", `0 0 ${visualizationDiv.clientWidth} ${visualizationDiv.clientHeight}`);
-                    simulation.force("center", d3.forceCenter(visualizationDiv.clientWidth / 2, visualizationDiv.clientHeight / 2));
+                // Control button handlers
+                d3.selectAll('.filter-btn').on('click', function() {
+                    const level = d3.select(this).attr('data-level');
+                    visualizationManager.filterByControlLevel(level);
+                });
+
+                d3.select('#showInfluenceAnalysis').on('click', () => {
+                    if (state.selectedNode) {
+                        visualizationManager.showInfluenceAnalysis(state.selectedNode.id);
+                    } else {
+                        alert('Please select a node first');
+                    }
+                });
+
+                d3.select('#showPath').on('click', () => {
+                    const startLevel = d3.select('#startLevel').property('value');
+                    const endLevel = d3.select('#endLevel').property('value');
+                    
+                    if (startLevel && endLevel) {
+                        visualizationManager.buildAuthorityPath(startLevel, endLevel);
+                    } else {
+                        alert('Please select both start and end levels');
+                    }
+                });
+
+                // Window resize handler
+                function handleResize() {
+                    const width = visualizationDiv.clientWidth;
+                    const height = visualizationDiv.clientHeight || 600;
+                    
+                    svg.attr("viewBox", `0 0 ${width} ${height}`);
+                    simulation.force("center", d3.forceCenter(width / 2, height / 2));
                     simulation.alpha(0.3).restart();
                 }
 
-                // Call resize on window resize
-                window.addEventListener('resize', resize);
+                window.addEventListener('resize', handleResize);
 
-                // Initial call to resize
-                resize();
+                // Initial setup
+                visualizationManager.filterByControlLevel('ALL');
                 
+                // Cleanup on unmount
+                return () => {
+                    window.removeEventListener('resize', handleResize);
+                    simulation.stop();
+                };
+
             } catch (error) {
                 console.error('Error visualizing network:', error);
                 alert('Error visualizing network');
@@ -737,6 +1200,8 @@
                     '<p>Error querying network: ' + error.message + '</p>';
             }
         });
+
+        visualizeNetwork();
     </script>
 </body>
 </html>

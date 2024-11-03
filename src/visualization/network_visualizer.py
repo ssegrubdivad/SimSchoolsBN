@@ -4,12 +4,18 @@ from typing import Dict, List, Any, Optional, Union
 from dataclasses import dataclass
 import numpy as np
 import logging
+import json
 
 from src.visualization.network_visualizer import NetworkVisualizer
 from src.inference_engine.message_passing import InferenceResult
 from src.network_structure.bayesian_network import BayesianNetwork
 
-import json
+from ..education_models.locus_control import (
+    ControlLevel,
+    ControlScope,
+    ControlValidator,
+    ControlledVariable
+)
 
 @dataclass
 class VisualizationConfig:
@@ -19,6 +25,9 @@ class VisualizationConfig:
     show_confidence: bool = True
     color_scheme: str = "educational"  # educational/standard/custom
     layout_type: str = "hierarchical"  # hierarchical/radial/force-directed
+    show_control_levels: bool = True
+    show_influence_paths: bool = True
+    highlight_authority_paths: bool = True
 
 class NetworkVisualizer:
     """Base network visualization functionality."""
@@ -297,3 +306,265 @@ class VisualizationIntegrator:
                 'discrete': belief.get('discrete', {}),
                 'continuous': belief.get('continuous', {})
             }
+
+class ControlAwareNetworkVisualizer(NetworkVisualizer):
+    """
+    Enhanced network visualization with control level awareness.
+    Maintains exact representation of network structure and control relationships.
+    """
+    def __init__(self, bayesian_network):
+        super().__init__(bayesian_network)
+        self.control_validator = ControlValidator()
+        self.variable_controls: Dict[str, ControlledVariable] = {}
+        self._initialize_control_mappings()
+        self.logger = logging.getLogger(__name__)
+        
+        # Control level color scheme
+        self.control_colors = {
+            ControlLevel.STUDENT: "#4CAF50",      # Green
+            ControlLevel.TEACHER: "#2196F3",      # Blue
+            ControlLevel.PARENT: "#FFC107",       # Amber
+            ControlLevel.SCHOOL_ADMIN: "#9C27B0",  # Purple
+            ControlLevel.DISTRICT_ADMIN: "#F44336" # Red
+        }
+
+    def _initialize_control_mappings(self) -> None:
+        """Initialize control mappings for visualization."""
+        for node_id, node in self.bayesian_network.nodes.items():
+            if hasattr(node, 'control_scope'):
+                self.variable_controls[node_id] = ControlledVariable(
+                    name=node_id,
+                    control_scope=node.control_scope,
+                    validator=self.control_validator
+                )
+
+    def generate_graph_data(self, 
+                          config: Optional[VisualizationConfig] = None) -> Dict[str, Any]:
+        """
+        Generate visualization data with control information.
+        
+        Args:
+            config: Optional visualization configuration
+            
+        Returns:
+            Dict containing graph visualization data with control enhancements
+        """
+        config = config or VisualizationConfig()
+        
+        # Get base graph data
+        graph_data = super().generate_graph_data()
+        
+        if config.show_control_levels:
+            self._add_control_information(graph_data)
+            
+        if config.show_influence_paths:
+            self._add_influence_paths(graph_data)
+            
+        return graph_data
+
+    def _add_control_information(self, graph_data: Dict[str, Any]) -> None:
+        """
+        Add control level information to nodes and edges.
+        Preserves exact network structure while adding control visualization.
+        """
+        # Enhance nodes with control information
+        for node in graph_data['nodes']:
+            node_id = node['id']
+            if node_id in self.variable_controls:
+                controlled_var = self.variable_controls[node_id]
+                control_scope = controlled_var.control_scope
+                
+                # Add control level information
+                node['controlLevel'] = control_scope.primary_level.name
+                node['secondaryLevels'] = [
+                    level.name for level in control_scope.secondary_levels
+                ]
+                node['influenceWeight'] = control_scope.influence_weight
+                node['requiresCoordination'] = control_scope.requires_coordination
+                
+                # Add control level color
+                node['color'] = self.control_colors[control_scope.primary_level]
+                
+                # Add border style for coordination requirement
+                if control_scope.requires_coordination:
+                    node['borderStyle'] = 'dashed'
+                    node['borderWidth'] = 3
+
+        # Enhance edges with control relationship information
+        for edge in graph_data['links']:
+            source_id = edge['source']
+            target_id = edge['target']
+            
+            if (source_id in self.variable_controls and 
+                target_id in self.variable_controls):
+                source_level = self.variable_controls[source_id].control_scope.primary_level
+                target_level = self.variable_controls[target_id].control_scope.primary_level
+                
+                # Add control relationship type
+                if source_level.value < target_level.value:
+                    edge['controlType'] = 'upward'
+                    edge['strokeDasharray'] = '5,5'
+                elif source_level.value > target_level.value:
+                    edge['controlType'] = 'downward'
+                    edge['strokeWidth'] = 2
+                else:
+                    edge['controlType'] = 'same_level'
+
+    def _add_influence_paths(self, graph_data: Dict[str, Any]) -> None:
+        """
+        Add influence path information to visualization.
+        Shows how control levels influence each other.
+        """
+        influence_paths = []
+        
+        # Generate influence paths between control levels
+        for source_node in graph_data['nodes']:
+            if 'controlLevel' not in source_node:
+                continue
+                
+            for target_node in graph_data['nodes']:
+                if 'controlLevel' not in target_node:
+                    continue
+                    
+                source_level = ControlLevel[source_node['controlLevel']]
+                target_level = ControlLevel[target_node['controlLevel']]
+                
+                # Get influence path if it exists
+                path = self.control_validator.get_influence_path(
+                    source_level,
+                    target_level
+                )
+                
+                if path:
+                    influence_paths.append({
+                        'path': [level.name for level in path],
+                        'source': source_node['id'],
+                        'target': target_node['id'],
+                        'strength': self._calculate_influence_strength(path)
+                    })
+        
+        graph_data['influencePaths'] = influence_paths
+
+    def _calculate_influence_strength(self, 
+                                    path: List[ControlLevel]) -> float:
+        """
+        Calculate cumulative influence strength along a path.
+        Maintains exact influence weight calculations.
+        """
+        strength = 1.0
+        for i in range(len(path) - 1):
+            current = path[i]
+            next_level = path[i + 1]
+            
+            # Get variables controlled by current level
+            current_vars = [
+                var for var, ctrl in self.variable_controls.items()
+                if ctrl.control_scope.primary_level == current
+            ]
+            
+            # Calculate average influence weight
+            if current_vars:
+                weights = [
+                    self.variable_controls[var].get_influence_weight(next_level)
+                    for var in current_vars
+                ]
+                strength *= sum(weights) / len(weights)
+            
+        return strength
+
+    def highlight_authority_path(self, 
+                               start_node: str,
+                               control_level: ControlLevel) -> Dict[str, Any]:
+        """
+        Generate visualization data highlighting specific authority path.
+        
+        Args:
+            start_node: Starting node ID
+            control_level: Control level to highlight path from
+            
+        Returns:
+            Dict containing highlighted path information
+        """
+        if start_node not in self.variable_controls:
+            return {}
+            
+        controlled_var = self.variable_controls[start_node]
+        target_level = controlled_var.control_scope.primary_level
+        
+        # Get authority path
+        path = self.control_validator.get_influence_path(
+            control_level,
+            target_level
+        )
+        
+        if not path:
+            return {}
+            
+        # Create highlighted path data
+        highlighted_nodes = set()
+        highlighted_edges = set()
+        
+        for i in range(len(path) - 1):
+            current_level = path[i]
+            next_level = path[i + 1]
+            
+            # Find nodes at these levels
+            current_nodes = {
+                node_id for node_id, ctrl in self.variable_controls.items()
+                if ctrl.control_scope.primary_level == current_level
+            }
+            next_nodes = {
+                node_id for node_id, ctrl in self.variable_controls.items()
+                if ctrl.control_scope.primary_level == next_level
+            }
+            
+            highlighted_nodes.update(current_nodes)
+            if i == len(path) - 2:  # Add final level nodes
+                highlighted_nodes.update(next_nodes)
+                
+            # Add edges between levels
+            for curr in current_nodes:
+                for next_node in next_nodes:
+                    edge = (curr, next_node)
+                    if self._edge_exists(edge):
+                        highlighted_edges.add(edge)
+        
+        return {
+            'highlightedNodes': list(highlighted_nodes),
+            'highlightedEdges': list(highlighted_edges),
+            'authorityPath': [level.name for level in path]
+        }
+
+    def _edge_exists(self, edge: Tuple[str, str]) -> bool:
+        """Check if edge exists in network."""
+        return any(
+            e.parent.id == edge[0] and e.child.id == edge[1]
+            for e in self.bayesian_network.edges
+        )
+
+    def generate_control_level_summary(self) -> Dict[str, Any]:
+        """
+        Generate summary of control level distribution.
+        
+        Returns:
+            Dict containing control level statistics
+        """
+        summary = {level: [] for level in ControlLevel}
+        
+        for var_id, ctrl in self.variable_controls.items():
+            summary[ctrl.control_scope.primary_level].append({
+                'variable': var_id,
+                'influence_weight': ctrl.control_scope.influence_weight,
+                'requires_coordination': ctrl.control_scope.requires_coordination,
+                'secondary_levels': [
+                    level.name for level in ctrl.control_scope.secondary_levels
+                ]
+            })
+            
+        return {
+            level.name: {
+                'variables': variables,
+                'count': len(variables)
+            }
+            for level, variables in summary.items()
+        }
