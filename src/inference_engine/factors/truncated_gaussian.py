@@ -206,3 +206,106 @@ class TruncatedGaussianFactor(GaussianFactor):
     def _matching_variable_type(self, variable: str, other: 'Factor') -> bool:
         """Check if variable types are compatible."""
         return isinstance(other, (GaussianFactor, TruncatedGaussianFactor))
+
+    def reduce(self, evidence: Dict[str, Any]) -> 'Factor':
+        """
+        Reduce factor using evidence.
+        
+        Args:
+            evidence: Dictionary mapping variables to their observed values
+            
+        Returns:
+            New factor reduced by evidence
+            
+        Raises:
+            ValueError: If evidence is invalid
+            
+        Mathematical Properties:
+            - Exact reduction within bounds
+            - Proper normalization
+            - Error tracking
+        """
+        # First perform basic reduction validation
+        super().reduce(evidence)
+        
+        # For truncated Gaussian, reduction with evidence creates a constant factor
+        if self.variables[0] in evidence:
+            value = float(evidence[self.variables[0]])
+            
+            # Check if evidence is within bounds
+            if value < self.lower_bound or value > self.upper_bound:
+                prob = 0.0
+            else:
+                prob = self._compute_probability(value)
+                
+            from .base import ConstantFactor
+            return ConstantFactor(
+                [],
+                prob,
+                f"{self.name}_reduced"
+            )
+            
+        # If no relevant evidence, return unchanged
+        return self
+
+    def normalize(self) -> 'Factor':
+        """
+        Normalize factor (already normalized by truncation bounds).
+        
+        Returns:
+            Self (truncated Gaussian is inherently normalized)
+            
+        Mathematical Properties:
+            - Maintains normalization over truncated domain
+        """
+        # Truncated Gaussian is already normalized over its domain
+        return self
+
+    def compute_cdf(self, value: float) -> float:
+        """
+        Compute cumulative probability up to value.
+        
+        Args:
+            value: Point at which to compute CDF
+            
+        Returns:
+            Cumulative probability
+            
+        Mathematical Properties:
+            - Exact CDF computation
+            - Proper bound handling
+        """
+        if value <= self.lower_bound:
+            return 0.0
+        if value >= self.upper_bound:
+            return 1.0
+            
+        # Use scipy.stats.truncnorm for numerical stability
+        a = (self.lower_bound - self.mean) / np.sqrt(self.variance)
+        b = (self.upper_bound - self.mean) / np.sqrt(self.variance)
+        
+        return truncnorm.cdf(
+            value,
+            a,
+            b,
+            loc=self.mean,
+            scale=np.sqrt(self.variance)
+        )
+
+    def compute_percentile(self, value: float) -> float:
+        """
+        Compute percentile for a given value.
+        
+        Args:
+            value: Value to compute percentile for
+            
+        Returns:
+            Percentile (0-100)
+            
+        Mathematical Properties:
+            - Exact percentile computation
+            - Proper bound handling
+        """
+        return 100.0 * self.compute_cdf(value)
+
+    
